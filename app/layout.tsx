@@ -9,7 +9,7 @@ import { MobileMenu } from '@/components/MobileMenu';
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
 export const metadata: Metadata = {
-  title: 'Трудодень',
+  title: 'Трудяга',
   description: 'Учёт заработной платы монтажников',
 };
 
@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <header className="bg-white border-b border-gray-200 shadow-sm">
               <div className="max-w-7xl mx-auto px-3 py-3 flex items-center justify-between">
                 <Link href="/" className="text-xl font-bold text-blue-600">
-                  Трудодень
+                  Трудяга
                 </Link>
                 <MobileMenu />
               </div>

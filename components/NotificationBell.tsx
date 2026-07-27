@@ -29,7 +29,7 @@ export function NotificationBell() {
         .eq('status', 'pending');
       if (!error && count !== null) {
         if (count > pendingCount && permission === 'granted') {
-          new Notification('Трудодень', {
+          new Notification('Трудяга', {
             body: `Новых записей на подтверждение: ${count}`,
             icon: '/favicon.ico',
           });
