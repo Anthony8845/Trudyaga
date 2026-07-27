@@ -12,16 +12,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user && pathname !== '/login') {
       router.push('/login');
+    } else if (user && pathname === '/login') {
+      router.push('/');
     }
   }, [user, pathname, router]);
-
-  if (!user && pathname !== '/login') {
-    return (
-      <div className="flex justify-center items-center h-64 text-gray-500">
-        Проверка доступа...
-      </div>
-    );
-  }
 
   return <>{children}</>;
 }

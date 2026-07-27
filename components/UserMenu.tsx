@@ -21,7 +21,7 @@ export function UserMenu() {
   return (
     <div className="flex items-center space-x-2 ml-auto">
       <span className="text-gray-700 text-sm">
-        {user.role === 'admin' ? '👑 Администратор' : '👷 ' + user.email}
+        {user.role === 'brigadier' ? '👷 Бригадир' : user.role === 'supervisor' ? '👑 Руководитель' : '👷 ' + user.login}
       </span>
       <button
         onClick={handleLogout}

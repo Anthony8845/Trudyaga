@@ -22,6 +22,9 @@ export interface WorkLog {
   quantity: number;
   log_date: string;
   amount: number;
+  status: 'pending' | 'approved' | 'rejected';
+  confirmed_by?: string;
+  confirmed_at?: string;
 }
 
 export interface Brigade {
@@ -43,7 +46,8 @@ export async function addBrigade(name: string): Promise<Brigade> {
 }
 
 export async function updateBrigade(brigade: Brigade): Promise<void> {
-  const { error } = await supabase.from('brigades').update({ name: brigade.name }).eq('id', brigade.id);
+  const { id, ...fields } = brigade;
+  const { error } = await supabase.from('brigades').update(fields).eq('id', id);
   if (error) throw error;
 }
 
@@ -90,7 +94,8 @@ export async function addWorkType(wt: Omit<WorkType, 'id'>): Promise<WorkType> {
 }
 
 export async function updateWorkType(wt: WorkType): Promise<void> {
-  const { error } = await supabase.from('work_types').update(wt).eq('id', wt.id);
+  const { id, ...fields } = wt;  // убираем id
+  const { error } = await supabase.from('work_types').update(fields).eq('id', id);
   if (error) throw error;
 }
 
@@ -106,7 +111,7 @@ export async function getWorkLogs(): Promise<WorkLog[]> {
   return data;
 }
 
-export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount'>): Promise<WorkLog> {
+export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount' | 'status'>): Promise<WorkLog> {
   // Получаем ставку вида работ
   const { data: wt, error: wtError } = await supabase
     .from('work_types')
@@ -162,7 +167,9 @@ export async function getSalaryReport(startDate: string, endDate: string) {
       work_type:work_types(id, name, unit, rate)
     `)
     .gte('log_date', startDate)
-    .lte('log_date', endDate);
+    .eq('status', 'approved')
+    .lte('log_date', endDate)
+    .eq('status', 'approved');
 
   if (error) throw error;
 
@@ -260,4 +267,36 @@ export async function getSalaryReport(startDate: string, endDate: string) {
   }
 
   return result;
+}
+
+
+// Получить все неподтверждённые записи (для руководителя)
+export async function getPendingWorkLogs(): Promise<WorkLog[]> {
+  const { data, error } = await supabase
+    .from('work_logs')
+    .select('*')
+    .eq('status', 'pending')
+    .order('log_date', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// Подтвердить запись
+export async function approveWorkLog(id: number): Promise<void> {
+  const user = (await supabase.auth.getUser()).data.user;
+  const { error } = await supabase
+    .from('work_logs')
+    .update({ status: 'approved', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// Отклонить запись
+export async function rejectWorkLog(id: number): Promise<void> {
+  const user = (await supabase.auth.getUser()).data.user;
+  const { error } = await supabase
+    .from('work_logs')
+    .update({ status: 'rejected', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
 }

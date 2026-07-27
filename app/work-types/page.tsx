@@ -44,22 +44,27 @@ function WorkTypesContent() {
     const rateNum = parseFloat(form.rate);
     if (isNaN(rateNum) || rateNum < 0) return;
 
-    if (editingId !== null) {
-      await updateWorkType({
-        id: editingId,
-        name: form.name.trim(),
-        unit: form.unit.trim(),
-        rate: rateNum,
-      });
-    } else {
-      await addWorkType({
-        name: form.name.trim(),
-        unit: form.unit.trim(),
-        rate: rateNum,
-      });
+    try {
+      if (editingId !== null) {
+        await updateWorkType({
+          id: editingId,
+          name: form.name.trim(),
+          unit: form.unit.trim(),
+          rate: rateNum,
+        });
+      } else {
+        await addWorkType({
+          name: form.name.trim(),
+          unit: form.unit.trim(),
+          rate: rateNum,
+        });
+      }
+      resetForm();
+      load();
+    } catch (error: any) {
+      alert('Ошибка при сохранении: ' + (error.message || 'Неизвестная ошибка'));
+      console.error(error);
     }
-    resetForm();
-    load();
   };
 
   const startEdit = (wt: WorkType) => {

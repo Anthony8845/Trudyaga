@@ -20,8 +20,8 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }
 
   // Только админ имеет полный доступ
-  if (user.role !== 'admin') {
-    return <div className="text-center py-12 text-gray-500">У вас недостаточно прав для просмотра этой страницы.</div>;
+  if (user.role !== 'brigadier' && user.role !== 'supervisor') {
+    return <div>У вас недостаточно прав...</div>;
   }
 
   return <>{children}</>;

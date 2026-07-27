@@ -1,20 +1,19 @@
-// lib/AuthContext.tsx
 'use client';
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from './supabase';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
-import React, { createContext, useContext, useEffect, useState } from 'react';
-
 
 interface AppUser {
   id: string;
-  email: string;
-  role: 'admin' | 'brigadier' | 'worker';
-  brigade_id?: number;
+  login: string;
+  role: 'brigadier' | 'supervisor' | 'worker';
+  brigadeId?: number;
 }
 
 interface AuthContextType {
   user: AppUser | null;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (login: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
 }
 
@@ -27,8 +26,7 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
 
-  // Функция для загрузки профиля по user_id
-  const loadProfile = async (userId: string) => {
+  const loadProfile = async (userId: string, userEmail: string) => {
     const { data, error } = await supabase
       .from('profiles')
       .select('role, brigade_id')
@@ -36,28 +34,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .single();
 
     if (error || !data) {
-      // Если профиль не найден, возможно, пользователь не настроен, выходим
       setUser(null);
       return;
     }
 
     setUser({
       id: userId,
-      email: '', // email заполним из сессии
+      login: userEmail, // теперь сохраняем логин (email из auth)
       role: data.role as AppUser['role'],
-      brigade_id: data.brigade_id ?? undefined,
+      brigadeId: data.brigade_id ?? undefined,
     });
   };
 
-  // При загрузке и изменении сессии
   useEffect(() => {
     const initSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        // Загружаем профиль
-        await loadProfile(session.user.id);
-        // Добавляем email из объекта пользователя
-        setUser(prev => prev ? { ...prev, email: session.user.email! } : null);
+        await loadProfile(session.user.id, session.user.email!);
       }
     };
 
@@ -66,8 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event: AuthChangeEvent, session: Session | null) => {
         if (session?.user) {
-          await loadProfile(session.user.id);
-          setUser(prev => prev ? { ...prev, email: session.user.email! } : null);
+          await loadProfile(session.user.id, session.user.email!);
         } else {
           setUser(null);
         }
@@ -79,11 +71,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return false;
-    // Сессия будет обработана слушателем onAuthStateChange
-    return true;
+  const login = async (login: string, password: string): Promise<boolean> => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: login,
+      password,
+    });
+    return !error;
   };
 
   const logout = async () => {

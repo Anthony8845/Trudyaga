@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { getSalaryReport } from '@/lib/data';
 import { formatMoney, formatDate } from '@/lib/utils';
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, AlignmentType, HeadingLevel } from 'docx';
 
 interface WorkerDetail {
   worker: {
@@ -33,8 +34,8 @@ interface ReportItem {
 
 export default function ReportPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
-  const brigadeId = user?.brigade_id;
+  const isManager = user?.role === 'brigadier' || user?.role === 'supervisor';
+  const brigadeId = user?.brigadeId;
 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -52,7 +53,7 @@ export default function ReportPage() {
       return;
     }
     const fullReport = await getSalaryReport(startDate, endDate);
-    if (!isAdmin && brigadeId) {
+    if (!isManager && brigadeId) {
       // Оставляем только бригаду бригадира
       const filtered = fullReport.filter(item => item.brigade === brigadeId);
       setReport(filtered);
@@ -60,6 +61,92 @@ export default function ReportPage() {
       setReport(fullReport);
     }
   };
+  const handlePrint = () => {
+  if (!report || report.length === 0) return;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head><title>Зарплатная ведомость</title></head>
+        <body style="font-family: Arial, sans-serif; padding: 20px;">
+          <h1>Зарплатная ведомость</h1>
+          ${report.map(item => `
+            <h2>${item.brigade_name} (${formatMoney(item.total_brigade_amount ?? 0)})</h2>
+            <table border="1" cellpadding="5" cellspacing="0" style="width:100%; border-collapse:collapse; margin-bottom:20px;">
+              <tr><th>Сотрудник</th><th>Сумма</th></tr>
+              ${item.workers.map(w => `
+                <tr><td>${w.worker.full_name}</td><td>${formatMoney(w.total_amount ?? 0)}</td></tr>
+              `).join('')}
+            </table>
+          `).join('')}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
+  const handleDownloadPayslip = async (worker: any) => {
+  // Данные для расчётного листка уже есть в props (worker.total_amount, worker.details)
+  const details = worker.details;
+
+  const tableRows = details.map((d: any) =>
+    new TableRow({
+      children: [
+        new TableCell({ children: [new Paragraph(d.workTypeName || '')], width: { size: 30, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph(d.unit || '')], width: { size: 10, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ children: [new TextRun(String(d.quantity))], alignment: AlignmentType.RIGHT })], width: { size: 10, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ children: [new TextRun(formatMoney(d.rate))], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ children: [new TextRun(formatMoney(d.amount))], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+      ],
+    })
+  );
+
+  tableRows.push(
+    new TableRow({
+      children: [
+        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Итого', bold: true })] })], columnSpan: 4, width: { size: 65, type: WidthType.PERCENTAGE } }),
+        new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: formatMoney(worker.total_amount), bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+      ],
+    })
+  );
+
+  const doc = new Document({
+    sections: [{
+      children: [
+        new Paragraph({ alignment: AlignmentType.CENTER, heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'Расчётный листок', bold: true, size: 28 })] }),
+        new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `${startDate} – ${endDate}`, size: 22 })] }),
+        new Paragraph({ children: [] }),
+        new Paragraph({ children: [new TextRun({ text: `Работодатель: ИП Пиногоров А.А.`, bold: true })] }),
+        new Paragraph({ children: [new TextRun({ text: `Сотрудник: ${worker.worker.full_name}`, bold: true })] }),
+        new Paragraph({ children: [new TextRun({ text: `Должность: ${worker.worker.position || ''}` })] }),
+        new Paragraph({ children: [] }),
+        new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [
+          new TableRow({ children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Вид работы', bold: true })] })], width: { size: 30, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Ед.', bold: true })] })], width: { size: 10, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Кол-во', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 10, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Расценка', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Сумма', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+          ] }),
+          ...tableRows,
+        ] }),
+        new Paragraph({ children: [] }),
+        new Paragraph({ children: [new TextRun(`Дата формирования: ${new Date().toLocaleDateString('ru-RU')}`)] }),
+        new Paragraph({ children: [new TextRun('ИП Пиногоров А.А.')] }),
+      ],
+    }],
+  });
+
+  Packer.toBlob(doc).then(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Расчётный лист ${worker.worker.full_name}.docx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+};
 
   return (
     <div className="space-y-6">
@@ -91,6 +178,7 @@ export default function ReportPage() {
             >
               Сформировать
             </button>
+            <button onClick={handlePrint} className="px-4 py-2 bg-gray-200 rounded-md">Печать ведомости</button>
           </div>
         </div>
       </div>
@@ -117,6 +205,18 @@ export default function ReportPage() {
                       <span className="font-medium">{w.worker.full_name}</span>
                       <span className="ml-2 text-gray-500 text-sm">{w.worker.position}</span>
                       <span className="float-right mr-4 font-medium">{formatMoney(w.total_amount ?? 0)}</span>
+                        <button 
+                          onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadPayslip(w);
+                            }}
+                            className="ml-2 inline-flex items-center px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 border border-blue-200 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            Скачать .docx
+                        </button>
                     </summary>
                     <ul className="mt-2 space-y-1 pl-4 text-sm">
                       {w.details.map(d => (

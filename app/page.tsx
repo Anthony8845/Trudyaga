@@ -19,8 +19,8 @@ import { formatDate, formatMoney } from '@/lib/utils';
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
-  const brigadeId = user?.brigade_id;
+  const isManager = user?.role === 'brigadier' || user?.role === 'supervisor';
+  const brigadeId = user?.brigadeId;;
 
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
@@ -51,12 +51,14 @@ export default function DashboardPage() {
     setBrigades(b);
 
     // Фильтрация по бригаде для бригадира
-    if (!isAdmin && brigadeId) {
-      const brigadeWorkerIds = w.filter(wk => wk.brigade_id === brigadeId).map(wk => wk.id);
-      setLogs(l.filter(log => brigadeWorkerIds.includes(log.worker_id)).sort((a, b) => b.log_date.localeCompare(a.log_date)));
-    } else {
-      setLogs(l.sort((a, b) => b.log_date.localeCompare(a.log_date)));
-    }
+    if (!isManager && brigadeId) {
+  const brigadeWorkerIds = w.filter(wk => wk.brigade_id === brigadeId).map(wk => wk.id);
+    setLogs(l.filter(log => brigadeWorkerIds.includes(log.worker_id) && log.status === 'approved')
+      .sort((a, b) => b.log_date.localeCompare(a.log_date)));
+  } else {
+    // Администратор и супервизор видят все записи
+    setLogs(l.sort((a, b) => b.log_date.localeCompare(a.log_date)));
+  }
   };
 
   useEffect(() => {
@@ -104,7 +106,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8">
       {/* Форма доступна только админу */}
-      {isAdmin && (
+      {isManager && (
         <section className="bg-white rounded-xl shadow p-6">
           <h2 className="text-lg font-semibold mb-4">Добавить запись</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -233,6 +235,7 @@ export default function DashboardPage() {
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Работа</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Кол-во</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Сумма</th>
+                  <th>Статус</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -246,6 +249,7 @@ export default function DashboardPage() {
                       <td className="px-4 py-2 text-sm">{wt?.name || '—'}</td>
                       <td className="px-4 py-2 text-sm">{log.quantity} {wt?.unit || ''}</td>
                       <td className="px-4 py-2 text-sm text-right font-medium">{formatMoney(log.amount)}</td>
+                      <td>{log.status === 'approved' ? '✅' : log.status === 'rejected' ? '❌' : '⏳'}</td>
                     </tr>
                   );
                 })}

@@ -9,11 +9,11 @@ export function formatDate(dateString: string): string {
 }
 
 export function formatMoney(amount: number): string {
+  if (amount === undefined || amount === null) amount = 0;
   const fixed = amount.toFixed(2);
   const parts = fixed.split('.');
   const intPart = parts[0];
   const decPart = parts[1];
-  // Разделитель тысяч — пробел, десятичный разделитель — запятая
   const formatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ',' + decPart + ' ₽';
   return formatted;
 }

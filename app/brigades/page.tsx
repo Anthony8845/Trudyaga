@@ -25,7 +25,7 @@ export default function BrigadesPage() {
 
 function BrigadesContent() {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isManager = user?.role === 'brigadier' || user?.role === 'supervisor';
   const [brigades, setBrigades] = useState<Brigade[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [editingBrigade, setEditingBrigade] = useState<Brigade | null>(null);
@@ -78,7 +78,7 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-2xl font-semibold">Бригады и состав</h1>
-        {isAdmin && (
+        {isManager && (
           <button
             onClick={() => {
               setShowAddForm(true);
@@ -132,7 +132,7 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
             >
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-medium">{brigade.name}</h2>
-                {isAdmin && (
+                {isManager && (
                   <div className="flex space-x-2">
                     <button
                       onClick={() => {
@@ -198,7 +198,7 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
                           <span className="font-medium">{worker.full_name}</span>
                           <span className="text-gray-500 ml-2">{worker.position}</span>
                         </div>
-                        {isAdmin && (
+                        {isManager && (
                           <select
                             value={worker.brigade_id ?? ''}
                             onChange={e =>
