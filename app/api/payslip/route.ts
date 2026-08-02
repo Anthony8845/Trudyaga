@@ -21,32 +21,45 @@ export async function GET(request: NextRequest) {
   const start = searchParams.get('start');
   const end = searchParams.get('end');
 
+  console.log('Payslip params:', { workerId, start, end });
+
   if (!workerId || !start || !end) {
     return new NextResponse('Неверные параметры', { status: 400 });
   }
 
   try {
+    // Убедимся, что workerId – число
+    const workerIdNum = parseInt(workerId, 10);
+    if (isNaN(workerIdNum)) {
+      return new NextResponse('Некорректный workerId', { status: 400 });
+    }
+
     const { data: worker, error: workerError } = await supabase
       .from('workers')
       .select('full_name, position')
-      .eq('id', workerId)
+      .eq('id', workerIdNum)
       .single();
 
     if (workerError || !worker) {
+      console.error('Worker not found:', workerError);
       return new NextResponse('Сотрудник не найден', { status: 404 });
     }
 
     const { data: logs, error: logsError } = await supabase
       .from('work_logs')
-      .select('id, log_date, quantity, amount, work_type:work_types(name, unit, rate)')
-      .eq('worker_id', workerId)
+      .select(`
+        id, log_date, quantity, amount,
+        work_type:work_types(name, unit, rate),
+        object:objects(id, name)
+      `)
+      .eq('worker_id', workerIdNum)
       .eq('status', 'approved')
       .gte('log_date', start)
       .lte('log_date', end)
       .order('log_date', { ascending: true });
 
     if (logsError) {
-      console.error('Supabase error:', logsError);
+      console.error('Supabase logs error:', logsError);
       return new NextResponse('Ошибка получения данных', { status: 500 });
     }
 
@@ -56,8 +69,12 @@ export async function GET(request: NextRequest) {
       new TableRow({
         children: [
           new TableCell({
+            children: [new Paragraph(log.object?.name || '')],
+            width: { size: 15, type: WidthType.PERCENTAGE },
+          }),
+          new TableCell({
             children: [new Paragraph(log.work_type?.name || '')],
-            width: { size: 30, type: WidthType.PERCENTAGE },
+            width: { size: 25, type: WidthType.PERCENTAGE },
           }),
           new TableCell({
             children: [new Paragraph(log.work_type?.unit || '')],
@@ -84,8 +101,8 @@ export async function GET(request: NextRequest) {
         children: [
           new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: 'Итого', bold: true })] })],
-            columnSpan: 4,
-            width: { size: 65, type: WidthType.PERCENTAGE },
+            columnSpan: 5,
+            width: { size: 75, type: WidthType.PERCENTAGE },
           }),
           new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: formatMoney(totalAmount), bold: true })], alignment: AlignmentType.RIGHT })],
@@ -125,8 +142,12 @@ export async function GET(request: NextRequest) {
                 new TableRow({
                   children: [
                     new TableCell({
+                      children: [new Paragraph({ children: [new TextRun({ text: 'Объект', bold: true })] })],
+                      width: { size: 15, type: WidthType.PERCENTAGE },
+                    }),
+                    new TableCell({
                       children: [new Paragraph({ children: [new TextRun({ text: 'Вид работы', bold: true })] })],
-                      width: { size: 30, type: WidthType.PERCENTAGE },
+                      width: { size: 25, type: WidthType.PERCENTAGE },
                     }),
                     new TableCell({
                       children: [new Paragraph({ children: [new TextRun({ text: 'Ед.', bold: true })] })],

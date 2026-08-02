@@ -15,6 +15,18 @@ export interface WorkType {
   rate: number;
 }
 
+
+export interface Brigade {
+  id: number;
+  name: string;
+}
+
+export interface ObjectItem {
+  id: number;
+  name: string;
+  address?: string;
+}
+
 export interface WorkLog {
   id: number;
   worker_id: number;
@@ -25,11 +37,45 @@ export interface WorkLog {
   status: 'pending' | 'approved' | 'rejected';
   confirmed_by?: string;
   confirmed_at?: string;
+  object_id?: number;          // новый
+  // при выборке с join
+  object?: ObjectItem;
+  worker?: Worker;
+  work_type?: WorkType;
 }
 
-export interface Brigade {
-  id: number;
-  name: string;
+// ---------- Объекты ----------
+export async function getObjects(): Promise<ObjectItem[]> {
+  const { data, error } = await supabase.from('objects').select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function addObject(obj: Omit<ObjectItem, 'id'>): Promise<ObjectItem> {
+  const { data, error } = await supabase.from('objects').insert(obj).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateObject(obj: ObjectItem): Promise<void> {
+  const { id, ...fields } = obj;
+  const { error } = await supabase.from('objects').update(fields).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteObject(id: number): Promise<void> {
+  const { error } = await supabase.from('objects').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export async function updateWorkLog(id: number, updates: Partial<WorkLog>): Promise<void> {
+  const { error } = await supabase.from('work_logs').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteWorkLog(id: number): Promise<void> {
+  const { error } = await supabase.from('work_logs').delete().eq('id', id);
+  if (error) throw error;
 }
 
 // ---------- Бригады ----------
@@ -111,8 +157,7 @@ export async function getWorkLogs(): Promise<WorkLog[]> {
   return data;
 }
 
-export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount' | 'status'>): Promise<WorkLog> {
-  // Получаем ставку вида работ
+export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount'> & { status?: string }): Promise<WorkLog> {
   const { data: wt, error: wtError } = await supabase
     .from('work_types')
     .select('rate')
@@ -123,8 +168,8 @@ export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount' | 'status'>)
 
   const { data, error } = await supabase
     .from('work_logs')
-    .insert({ ...log, amount })
-    .select()
+    .insert({ ...log, amount, status: log.status || 'pending' })
+    .select('*, worker:workers(*), work_type:work_types(*), object:objects(*)')
     .single();
   if (error) throw error;
   return data;
@@ -134,15 +179,25 @@ export async function addWorkLogForBrigade(
   brigadeId: number,
   workTypeId: number,
   quantity: number,
-  date: string
+  date: string,
+  objectId?: number
 ): Promise<WorkLog[]> {
-  // Получаем список сотрудников бригады
   const { data: workers, error: wError } = await supabase
     .from('workers')
     .select('id')
     .eq('brigade_id', brigadeId);
   if (wError) throw wError;
   if (!workers.length) throw new Error('В бригаде нет сотрудников');
+
+  const { data: wt, error: wtError } = await supabase
+    .from('work_types')
+    .select('rate')
+    .eq('id', workTypeId)
+    .single();
+  if (wtError) throw wtError;
+
+  const totalAmount = quantity * wt.rate;
+  const amountPerWorker = totalAmount / workers.length;
 
   const logs: WorkLog[] = [];
   for (const w of workers) {
@@ -151,7 +206,10 @@ export async function addWorkLogForBrigade(
       work_type_id: workTypeId,
       quantity,
       log_date: date,
-    });
+      object_id: objectId,
+    } as any);
+    await supabase.from('work_logs').update({ amount: amountPerWorker }).eq('id', log.id);
+    log.amount = amountPerWorker;
     logs.push(log);
   }
   return logs;
@@ -162,66 +220,41 @@ export async function getSalaryReport(startDate: string, endDate: string) {
   const { data, error } = await supabase
     .from('work_logs')
     .select(`
-      id, log_date, quantity, amount,
+      id, log_date, quantity, amount, status,
       worker:workers!inner(id, full_name, position, brigade_id),
-      work_type:work_types(id, name, unit, rate)
+      work_type:work_types(id, name, unit, rate),
+      object:objects(id, name)
     `)
     .gte('log_date', startDate)
-    .eq('status', 'approved')
     .lte('log_date', endDate)
     .eq('status', 'approved');
 
   if (error) throw error;
 
-  const logs = (data as any[]).map((log: any) => ({
-    id: log.id,
-    log_date: log.log_date,
-    quantity: log.quantity,
-    amount: log.amount ?? 0,
-    worker: {
-      id: log.worker.id,
-      full_name: log.worker.full_name,
-      position: log.worker.position,
-      brigade_id: log.worker.brigade_id,
-    },
-    work_type: log.work_type ? {
-      id: log.work_type.id,
-      name: log.work_type.name,
-      unit: log.work_type.unit,
-      rate: log.work_type.rate,
-    } : null,
-  }));
+  const brigadeMap = new Map<number | null, any>();
 
+  for (const log of data as any[]) {
+    const worker = log.worker;
+    const brigadeId = worker.brigade_id || null;
 
-  const brigadeMap = new Map<number, { brigadeId: number; brigadeName: string; workers: Map<number, any> }>();
-  const noBrigade: any = { brigadeId: null, brigadeName: 'Без бригады', workers: new Map<number, any>() };
-
-  for (const log of logs) {
-    const brigadeId = log.worker.brigade_id || null;
-    let target: any;
-    if (brigadeId === null) {
-      target = noBrigade;
-    } else {
-      if (!brigadeMap.has(brigadeId)) {
-        brigadeMap.set(brigadeId, {
-          brigadeId,
-          brigadeName: '',
-          workers: new Map(),
-        });
-      }
-      target = brigadeMap.get(brigadeId)!;
+    if (!brigadeMap.has(brigadeId)) {
+      brigadeMap.set(brigadeId, {
+        brigade: brigadeId ? { id: brigadeId, name: '' } : { id: null, name: 'Без бригады' },
+        workers: new Map<number, any>(),
+      });
     }
+    const brigade = brigadeMap.get(brigadeId);
 
-    if (!target.workers.has(log.worker.id)) {
-      target.workers.set(log.worker.id, {
-        worker: log.worker,
+    if (!brigade.workers.has(worker.id)) {
+      brigade.workers.set(worker.id, {
+        worker: worker,
         total_amount: 0,
         details: [],
       });
     }
-    const wData = target.workers.get(log.worker.id);
-    wData.total_amount += log.amount;
-    wData.details.push({
+    const w = brigade.workers.get(worker.id);
+    w.total_amount += log.amount;
+    w.details.push({
       id: log.id,
       date: log.log_date,
       workTypeName: log.work_type?.name,
@@ -229,40 +262,30 @@ export async function getSalaryReport(startDate: string, endDate: string) {
       quantity: log.quantity,
       rate: log.work_type?.rate,
       amount: log.amount,
+      object: log.object ? { id: log.object.id, name: log.object.name } : null,
     });
   }
 
-  // Получаем названия бригад (только если есть id)
-  if (brigadeMap.size > 0) {
-    const ids = Array.from(brigadeMap.keys());
-    const { data: brigs, error: brigsError } = await supabase.from('brigades').select('id, name').in('id', ids);
-    if (brigs) {
-      for (const b of brigs) {
+  // Загружаем названия бригад
+  const brigadeIds = Array.from(brigadeMap.keys()).filter(id => id !== null) as number[];
+  if (brigadeIds.length > 0) {
+    const { data: brigadesData } = await supabase.from('brigades').select('id, name').in('id', brigadeIds);
+    if (brigadesData) {
+      for (const b of brigadesData) {
         const entry = brigadeMap.get(b.id);
-        if (entry) {
-          entry.brigadeName = b.name;
-        }
+        if (entry) entry.brigade.name = b.name;
       }
     }
   }
 
+  // Формируем итоговый массив
   const result: any[] = [];
-
-  if (noBrigade.workers.size > 0) {
+  for (const [, brigade] of brigadeMap) {
+    const total_brigade_amount = Array.from(brigade.workers.values()).reduce((sum: number, w: any) => sum + w.total_amount, 0);
     result.push({
-      brigade: null,
-      brigade_name: 'Без бригады',
-      total_brigade_amount: Array.from(noBrigade.workers.values()).reduce((sum: number, w: any) => sum + w.total_amount, 0),
-      workers: Array.from(noBrigade.workers.values()),
-    });
-  }
-
-  for (const [brigadeId, brigade] of brigadeMap) {
-    result.push({
-      brigade: brigadeId,
-      brigade_name: brigade.brigadeName || 'Бригада без названия',
-      total_brigade_amount: Array.from(brigade.workers.values()).reduce((sum: number, w: any) => sum + w.total_amount, 0),
+      brigade: brigade.brigade,
       workers: Array.from(brigade.workers.values()),
+      total_brigade_amount,
     });
   }
 
@@ -299,4 +322,81 @@ export async function rejectWorkLog(id: number): Promise<void> {
     .update({ status: 'rejected', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw error;
+}
+
+export async function getWorkLogsGroupedByBrigade() {
+  const { data: logs, error } = await supabase
+    .from('work_logs')
+    .select(`
+      id, log_date, quantity, amount, status,
+      worker:workers!inner(id, full_name, brigade_id),
+      work_type:work_types(id, name, unit, rate),
+      object:objects(id, name)
+    `)
+    .order('log_date', { ascending: false });
+
+  if (error) throw error;
+
+  // Собираем все уникальные brigade_id из работ
+  const brigadeSet = new Set<number>();
+  const logsTyped = logs as any[];
+  logsTyped.forEach(log => {
+    if (log.worker?.brigade_id) brigadeSet.add(log.worker.brigade_id);
+  });
+
+  // Получаем названия бригад
+  const brigadeMap = new Map<number, string>();
+  if (brigadeSet.size > 0) {
+    const { data: brigades } = await supabase
+      .from('brigades')
+      .select('id, name')
+      .in('id', Array.from(brigadeSet));
+    if (brigades) {
+      brigades.forEach((b: any) => brigadeMap.set(b.id, b.name));
+    }
+  }
+
+  // Группируем: бригада -> сотрудник -> работы
+  const grouped = new Map<number, any>(); // brigadeId -> workersMap
+  const noBrigade: any[] = []; // работы без бригады
+
+  logsTyped.forEach(log => {
+    const brigadeId = log.worker?.brigade_id || null;
+    if (brigadeId === null) {
+      noBrigade.push(log);
+      return;
+    }
+    if (!grouped.has(brigadeId)) {
+      grouped.set(brigadeId, new Map<number, any>());
+    }
+    const workersMap = grouped.get(brigadeId)!;
+    if (!workersMap.has(log.worker.id)) {
+      workersMap.set(log.worker.id, {
+        worker: log.worker,
+        logs: [],
+      });
+    }
+    workersMap.get(log.worker.id).logs.push(log);
+  });
+
+  // Преобразуем в массив для рендеринга
+  const result: any[] = [];
+  for (const [brigadeId, workersMap] of grouped) {
+    result.push({
+      brigadeId,
+      brigadeName: brigadeMap.get(brigadeId) || 'Бригада без названия',
+      workers: Array.from(workersMap.values()),
+    });
+  }
+  if (noBrigade.length > 0) {
+    result.push({
+      brigadeId: null,
+      brigadeName: 'Без бригады',
+      workers: [{
+        worker: null,
+        logs: noBrigade,
+      }],
+    });
+  }
+  return result;
 }
