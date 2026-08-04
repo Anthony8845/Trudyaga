@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/AuthContext';
-import { getPendingWorkLogs, approveWorkLog, rejectWorkLog, getWorkers, getWorkTypes, Worker, WorkType } from '@/lib/data';
+import { getPendingWorkLogs, approveWorkLog, deleteWorkLog, getWorkers, getWorkTypes, Worker, WorkType } from '@/lib/data';
 import { formatDate, formatMoney } from '@/lib/utils';
+
 
 export default function SupervisorPage() {
   const { user } = useAuth();
@@ -30,7 +31,8 @@ export default function SupervisorPage() {
   };
 
   const handleReject = async (id: number) => {
-    await rejectWorkLog(id);
+    if (!confirm('Удалить запись?')) return;
+    await deleteWorkLog(id);
     load();
   };
 

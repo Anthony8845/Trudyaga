@@ -25,7 +25,7 @@ export default function BrigadesPage() {
 
 function BrigadesContent() {
   const { user } = useAuth();
-  const isManager = user?.role === 'brigadier' || user?.role === 'supervisor';
+  const isAdmin = user?.role === 'brigadier' || user?.role === 'supervisor';
   const [brigades, setBrigades] = useState<Brigade[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [editingBrigade, setEditingBrigade] = useState<Brigade | null>(null);
@@ -65,20 +65,23 @@ function BrigadesContent() {
     }
   };
 
-const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) => {
-  const brigade_id = newBrigadeId === '' ? undefined : Number(newBrigadeId);
-  await updateWorker({ ...worker, brigade_id });
-  loadData();
-};
+  const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) => {
+    const brigadeId = newBrigadeId === '' ? undefined : Number(newBrigadeId);
+    await updateWorker({ ...worker, brigade_id: brigadeId });
+    loadData();
+  };
 
   const getBrigadeWorkers = (brigadeId: number) =>
     workers.filter(w => w.brigade_id === brigadeId);
+
+  // Сотрудники без бригады
+  const workersWithoutBrigade = workers.filter(w => w.brigade_id == null);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h1 className="text-2xl font-semibold">Бригады и состав</h1>
-        {isManager && (
+        {isAdmin && (
           <button
             onClick={() => {
               setShowAddForm(true);
@@ -94,9 +97,7 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
       {showAddForm && (
         <div className="bg-white rounded-xl shadow p-4 flex flex-col sm:flex-row gap-2 items-start sm:items-end">
           <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Название бригады
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Название бригады</label>
             <input
               type="text"
               value={newBrigadeName}
@@ -122,17 +123,15 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
         </div>
       )}
 
+      {/* Карточки бригад */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {brigades.map(brigade => {
           const brigadeWorkers = getBrigadeWorkers(brigade.id);
           return (
-            <div
-              key={brigade.id}
-              className="bg-white rounded-xl shadow p-4 space-y-3"
-            >
+            <div key={brigade.id} className="bg-white rounded-xl shadow p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-medium">{brigade.name}</h2>
-                {isManager && (
+                {isAdmin && (
                   <div className="flex space-x-2">
                     <button
                       onClick={() => {
@@ -190,20 +189,15 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
                 ) : (
                   <ul className="space-y-2">
                     {brigadeWorkers.map(worker => (
-                      <li
-                        key={worker.id}
-                        className="flex items-center justify-between text-sm bg-gray-50 rounded p-2"
-                      >
+                      <li key={worker.id} className="flex items-center justify-between text-sm bg-gray-50 rounded p-2">
                         <div>
                           <span className="font-medium">{worker.full_name}</span>
                           <span className="text-gray-500 ml-2">{worker.position}</span>
                         </div>
-                        {isManager && (
+                        {isAdmin && (
                           <select
                             value={worker.brigade_id ?? ''}
-                            onChange={e =>
-                              handleChangeWorkerBrigade(worker, e.target.value)
-                            }
+                            onChange={e => handleChangeWorkerBrigade(worker, e.target.value)}
                             className="text-xs rounded border-gray-300 ml-2"
                           >
                             <option value="">Без бригады</option>
@@ -222,6 +216,42 @@ const handleChangeWorkerBrigade = async (worker: Worker, newBrigadeId: string) =
             </div>
           );
         })}
+
+        {/* Блок «Без бригады» */}
+        {workersWithoutBrigade.length > 0 && (
+          <div className="bg-white rounded-xl shadow p-4 space-y-3 border-l-4 border-gray-300">
+            <h2 className="text-lg font-medium text-gray-500">Без бригады</h2>
+            <div>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">
+                Сотрудники ({workersWithoutBrigade.length})
+              </h3>
+              <ul className="space-y-2">
+                {workersWithoutBrigade.map(worker => (
+                  <li key={worker.id} className="flex items-center justify-between text-sm bg-gray-50 rounded p-2">
+                    <div>
+                      <span className="font-medium">{worker.full_name}</span>
+                      <span className="text-gray-500 ml-2">{worker.position}</span>
+                    </div>
+                    {isAdmin && (
+                      <select
+                        value={worker.brigade_id ?? ''}
+                        onChange={e => handleChangeWorkerBrigade(worker, e.target.value)}
+                        className="text-xs rounded border-gray-300 ml-2"
+                      >
+                        <option value="">Без бригады</option>
+                        {brigades.map(b => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

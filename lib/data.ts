@@ -116,8 +116,13 @@ export async function addWorker(worker: Omit<Worker, 'id'>): Promise<Worker> {
 }
 
 export async function updateWorker(worker: Worker): Promise<void> {
-  const { id, ...fields } = worker;  // убираем id из данных обновления
-  const { error } = await supabase.from('workers').update(fields).eq('id', id);
+  const { id, ...fields } = worker;
+  // Явно преобразуем undefined в null для nullable-полей
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(fields)) {
+    cleaned[key] = value === undefined ? null : value;
+  }
+  const { error } = await supabase.from('workers').update(cleaned).eq('id', id);
   if (error) throw error;
 }
 
