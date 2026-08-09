@@ -10,16 +10,15 @@ import {
   addWorkLog,
   addWorkLogForBrigade,
   getWorkLogsGroupedByBrigade,
-  getWorkLogs,
   updateWorkLog,
   deleteWorkLog,
   Worker,
   WorkType,
   Brigade,
   ObjectItem,
-  WorkLog,
 } from '@/lib/data';
 import { formatDate, formatMoney } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
 
 interface WorkRow {
   id: number;
@@ -36,9 +35,6 @@ export default function DashboardPage() {
   const [brigades, setBrigades] = useState<Brigade[]>([]);
   const [objects, setObjects] = useState<ObjectItem[]>([]);
   const [groupedData, setGroupedData] = useState<any[]>([]);
-  const [logs, setLogs] = useState<WorkLog[]>([]);
-
-  const [viewMode, setViewMode] = useState<'byBrigade' | 'table'>('byBrigade');
 
   // Форма добавления
   const [targetType, setTargetType] = useState<'worker' | 'brigade'>('worker');
@@ -50,36 +46,88 @@ export default function DashboardPage() {
     { id: Date.now(), work_type_id: 0, quantity: '' },
   ]);
 
-  // Редактирование
-  const [editingLogId, setEditingLogId] = useState<number | null>(null);
-  const [editingRow, setEditingRow] = useState<WorkRow>({
-    id: 0, work_type_id: 0, quantity: '',
-  });
-
-  // Фильтры и сортировка
-  const [sortField, setSortField] = useState<'log_date' | 'amount'>('log_date');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [filterWorker, setFilterWorker] = useState<number>(0);
-  const [filterObject, setFilterObject] = useState<number>(0);
+  // Редактирование объекта
+  const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
+  const [editBrigadeGroups, setEditBrigadeGroups] = useState<any[]>([]);
+  const [editSoloRows, setEditSoloRows] = useState<any[]>([]);
 
   const loadData = async () => {
     const [w, wt, b, obj] = await Promise.all([
-      getWorkers(), getWorkTypes(), getBrigades(), getObjects(),
+      getWorkers(),
+      getWorkTypes(),
+      getBrigades(),
+      getObjects(),
     ]);
     setWorkers(w);
     setWorkTypes(wt);
     setBrigades(b);
     setObjects(obj);
 
-    const [grouped, allLogs] = await Promise.all([
-      getWorkLogsGroupedByBrigade(),
-      getWorkLogs(),
-    ]);
-    setGroupedData(grouped);
-    setLogs(allLogs);
+    const grouped = await getWorkLogsGroupedByBrigade();
+
+    const objectMap = new Map<any, any>();
+    const noObject = {
+      id: null,
+      name: 'Без объекта',
+      brigades: new Map<string, any>(),
+      soloWorkers: new Map<number, { worker: any; logs: any[] }>(),
+    };
+
+    for (const brigade of grouped) {
+      for (const worker of brigade.workers) {
+        if (!worker.worker) continue;
+        for (const log of worker.logs) {
+          const objId = log.object?.id ?? null;
+          if (!objectMap.has(objId) && objId !== null) {
+            objectMap.set(objId, {
+              id: objId,
+              name: log.object?.name || '',
+              brigades: new Map<string, any>(),
+              soloWorkers: new Map<number, any>(),
+            });
+          }
+          const objGroup = objId === null ? noObject : objectMap.get(objId);
+
+          if (log.is_brigade) {
+            // Группируем бригадные записи по object_id, log_date, work_type_id
+            const groupKey = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
+            if (!objGroup.brigades.has(groupKey)) {
+              objGroup.brigades.set(groupKey, {
+                key: groupKey,
+                work_type: log.work_type,
+                quantity: log.quantity,
+                rate: log.work_type?.rate,
+                totalAmount: 0,
+                logs: [],
+                log_date: log.log_date,
+              });
+            }
+            const group = objGroup.brigades.get(groupKey);
+            group.logs.push(log);
+            group.totalAmount += log.amount;
+          } else {
+            if (!objGroup.soloWorkers.has(worker.worker.id)) {
+              objGroup.soloWorkers.set(worker.worker.id, {
+                worker: worker.worker,
+                logs: [],
+              });
+            }
+            objGroup.soloWorkers.get(worker.worker.id).logs.push(log);
+          }
+        }
+      }
+    }
+
+    const result = Array.from(objectMap.values());
+    if (noObject.brigades.size > 0 || noObject.soloWorkers.size > 0) {
+      result.push(noObject);
+    }
+    setGroupedData(result);
   };
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const resetBatchForm = () => {
     setTargetType('worker');
@@ -88,7 +136,6 @@ export default function DashboardPage() {
     setSelectedObjectId(0);
     setDate(new Date().toISOString().split('T')[0]);
     setRows([{ id: Date.now(), work_type_id: 0, quantity: '' }]);
-    setEditingLogId(null);
   };
 
   const addRow = () => {
@@ -102,7 +149,7 @@ export default function DashboardPage() {
   const handleBatchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedObjectId) return alert('Выберите объект');
-    if (rows.some(r => !r.work_type_id || !r.quantity)) return alert('Заполните все строки');
+    if (rows.some(row => !row.work_type_id || !row.quantity)) return alert('Заполните все строки');
 
     try {
       const promises = rows.map(row => {
@@ -129,43 +176,6 @@ export default function DashboardPage() {
     }
   };
 
-  const startEdit = (log: any) => {
-    setEditingLogId(log.id);
-    setTargetType(log.worker_id ? 'worker' : 'brigade');
-    setSelectedWorkerId(log.worker_id || 0);
-    setSelectedBrigadeId(0);
-    setSelectedObjectId(log.object_id || 0);
-    setDate(log.log_date);
-    setEditingRow({ id: 0, work_type_id: log.work_type_id, quantity: String(log.quantity) });
-    setRows([]);
-  };
-
-  const cancelEdit = () => {
-    setEditingLogId(null);
-    resetBatchForm();
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingRow.work_type_id || !editingRow.quantity || !selectedObjectId) return alert('Заполните все поля');
-    try {
-      const wt = workTypes.find(w => w.id === editingRow.work_type_id);
-      const newAmount = wt ? parseFloat(editingRow.quantity) * wt.rate : 0;
-      await updateWorkLog(editingLogId!, {
-        worker_id: targetType === 'worker' ? selectedWorkerId : undefined,
-        work_type_id: editingRow.work_type_id,
-        quantity: parseFloat(editingRow.quantity),
-        log_date: date,
-        object_id: selectedObjectId,
-        amount: newAmount,
-      });
-      cancelEdit();
-      loadData();
-    } catch (err: any) {
-      alert('Ошибка: ' + (err.message || 'Неизвестная ошибка'));
-    }
-  };
-
   const handleDelete = async (id: number) => {
     if (confirm('Удалить запись?')) {
       await deleteWorkLog(id);
@@ -173,23 +183,125 @@ export default function DashboardPage() {
     }
   };
 
-  const getWorkerName = (id: number) => workers.find(w => w.id === id)?.full_name;
-  const getWorkType = (id: number) => workTypes.find(wt => wt.id === id);
-  const getObjectName = (id?: number) => id ? objects.find(o => o.id === id)?.name : '—';
+  const startEditObject = async (objectId: number | null) => {
+    let query = supabase
+      .from('work_logs')
+      .select('id, worker_id, work_type_id, quantity, log_date, object_id, amount, is_brigade, worker:workers!inner(id, full_name, brigade_id)')
+      .order('log_date', { ascending: false });
 
-  const filteredLogs = logs
-    .filter(log => !filterWorker || log.worker_id === filterWorker)
-    .filter(log => !filterObject || log.object_id === filterObject)
-    .sort((a, b) => {
-      const aVal = sortField === 'log_date' ? a.log_date : a.amount;
-      const bVal = sortField === 'log_date' ? b.log_date : b.amount;
-      return sortDir === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
+    if (objectId === null) {
+      query = query.is('object_id', null);
+    } else {
+      query = query.eq('object_id', objectId);
+    }
+
+    const { data: logs, error } = await query;
+    if (error || !logs) {
+      alert('Ошибка загрузки данных');
+      return;
+    }
+    if (logs.length === 0) {
+      alert('Нет записей для этого объекта');
+      return;
+    }
+
+    const brigadeLogs = logs.filter((log: any) => log.is_brigade);
+    const soloLogs = logs.filter((log: any) => !log.is_brigade);
+
+    const groupMap = new Map<string, any[]>();
+    brigadeLogs.forEach((log: any) => {
+      const key = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
+      if (!groupMap.has(key)) groupMap.set(key, []);
+      groupMap.get(key)!.push(log);
     });
+
+    const brigadeGroups: any[] = [];
+    groupMap.forEach((groupLogs) => {
+      const first = groupLogs[0];
+      brigadeGroups.push({
+        key: `${first.object_id ?? 'null'}_${first.log_date}_${first.work_type_id}`,
+        ids: groupLogs.map((l: any) => l.id),
+        work_type_id: first.work_type_id,
+        quantity: String(first.quantity),
+        groupSize: groupLogs.length,
+      });
+    });
+
+    const soloRows = soloLogs.map((log: any) => ({
+      id: log.id,
+      worker_name: log.worker.full_name,
+      work_type_id: log.work_type_id,
+      quantity: String(log.quantity),
+    }));
+
+    setEditBrigadeGroups(brigadeGroups);
+    setEditSoloRows(soloRows);
+    setEditingObjectId(objectId);
+  };
+
+  const cancelEditObject = () => {
+    setEditingObjectId(null);
+    setEditBrigadeGroups([]);
+    setEditSoloRows([]);
+  };
+
+  const handleEditObjectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editBrigadeGroups.length && !editSoloRows.length) return;
+
+    try {
+      const updates: Promise<any>[] = [];
+
+      editBrigadeGroups.forEach(group => {
+        const wt = workTypes.find(w => w.id === group.work_type_id);
+        const rate = wt ? wt.rate : 0;
+        const totalAmount = parseFloat(group.quantity) * rate;
+        const amountPerWorker = totalAmount / group.groupSize;
+
+        group.ids.forEach((id: number) => {
+          updates.push(
+            updateWorkLog(id, {
+              work_type_id: group.work_type_id,
+              quantity: parseFloat(group.quantity),
+              amount: amountPerWorker,
+            })
+          );
+        });
+      });
+
+      editSoloRows.forEach(row => {
+        const wt = workTypes.find(w => w.id === row.work_type_id);
+        const rate = wt ? wt.rate : 0;
+        const newAmount = parseFloat(row.quantity) * rate;
+        updates.push(
+          updateWorkLog(row.id, {
+            work_type_id: row.work_type_id,
+            quantity: parseFloat(row.quantity),
+            amount: newAmount,
+          })
+        );
+      });
+
+      await Promise.all(updates);
+      cancelEditObject();
+      loadData();
+    } catch (err: any) {
+      alert('Ошибка: ' + (err.message || 'Неизвестная ошибка'));
+    }
+  };
+
+  const updateBrigadeGroupField = (index: number, field: string, value: any) => {
+    setEditBrigadeGroups(prev => prev.map((g, i) => i === index ? { ...g, [field]: value } : g));
+  };
+
+  const updateSoloRowField = (index: number, field: string, value: any) => {
+    setEditSoloRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
+  };
 
   return (
     <div className="space-y-8">
       {/* Форма добавления */}
-      {isManager && !editingLogId && (
+      {isManager && editingObjectId === null && (
         <section className="bg-white rounded-xl shadow p-6">
           <h2 className="text-lg font-semibold mb-4">Добавить работы</h2>
           <form onSubmit={handleBatchSubmit} className="space-y-4">
@@ -226,7 +338,6 @@ export default function DashboardPage() {
               <label className="block text-sm font-medium text-gray-700">Дата</label>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required />
             </div>
-            {/* Строки */}
             <div className="space-y-3">
               {rows.map((row, idx) => (
                 <div key={row.id} className="flex flex-wrap items-end gap-2">
@@ -255,208 +366,178 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {/* Редактирование */}
-      {isManager && editingLogId && (
+      {/* Редактирование объекта */}
+      {isManager && editingObjectId !== null && (
         <section className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Редактировать запись</h2>
-          <form onSubmit={handleEditSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Объект</label>
-              <select value={selectedObjectId} onChange={e => setSelectedObjectId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
-                <option value={0} disabled>Выберите объект</option>
-                {objects.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-            </div>
-            <div className="flex space-x-4">
-              <label className="inline-flex items-center"><input type="radio" value="worker" checked={targetType === 'worker'} onChange={() => setTargetType('worker')} className="text-blue-600" /><span className="ml-2 text-sm">Сотруднику</span></label>
-              <label className="inline-flex items-center"><input type="radio" value="brigade" checked={targetType === 'brigade'} onChange={() => setTargetType('brigade')} className="text-blue-600" /><span className="ml-2 text-sm">Бригаде</span></label>
-            </div>
-            {targetType === 'worker' ? (
+          <h2 className="text-lg font-semibold mb-4">
+            Редактирование объекта: {objects.find(o => o.id === editingObjectId)?.name || 'Без объекта'}
+          </h2>
+          <form onSubmit={handleEditObjectSubmit} className="space-y-6">
+            {editBrigadeGroups.length > 0 && (
               <div>
-                <label className="block text-sm font-medium text-gray-700">Сотрудник</label>
-                <select value={selectedWorkerId} onChange={e => setSelectedWorkerId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
-                  <option value={0} disabled>Выберите...</option>
-                  {workers.map(w => <option key={w.id} value={w.id}>{w.full_name}</option>)}
-                </select>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Бригада</label>
-                <select value={selectedBrigadeId} onChange={e => setSelectedBrigadeId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
-                  <option value={0} disabled>Выберите...</option>
-                  {brigades.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Бригадные работы</h3>
+                <div className="space-y-3">
+                  {editBrigadeGroups.map((group, idx) => (
+                    <div key={group.key} className="flex flex-wrap items-end gap-2">
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="block text-xs font-medium text-gray-500">Вид работы</label>
+                        <select
+                          value={group.work_type_id}
+                          onChange={e => updateBrigadeGroupField(idx, 'work_type_id', Number(e.target.value))}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        >
+                          <option value={0} disabled>Выберите...</option>
+                          {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
+                        </select>
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="block text-xs font-medium text-gray-500">Количество</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={group.quantity}
+                          onChange={e => updateBrigadeGroupField(idx, 'quantity', e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Вид работы</label>
-              <select value={editingRow.work_type_id} onChange={e => setEditingRow(prev => ({ ...prev, work_type_id: Number(e.target.value) }))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
-                <option value={0} disabled>Выберите...</option>
-                {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Количество</label>
-              <input type="number" step="any" min="0" value={editingRow.quantity} onChange={e => setEditingRow(prev => ({ ...prev, quantity: e.target.value }))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Дата</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required />
-            </div>
+
+            {editSoloRows.length > 0 && (
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Работы сотрудников</h3>
+                <div className="space-y-3">
+                  {editSoloRows.map((row, idx) => (
+                    <div key={row.id} className="flex flex-wrap items-end gap-2 border p-2 rounded bg-gray-50">
+                      <div className="min-w-[150px]">
+                        <label className="block text-xs font-medium text-gray-500">Сотрудник</label>
+                        <div className="text-sm font-medium">{row.worker_name}</div>
+                      </div>
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="block text-xs font-medium text-gray-500">Вид работы</label>
+                        <select
+                          value={row.work_type_id}
+                          onChange={e => updateSoloRowField(idx, 'work_type_id', Number(e.target.value))}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        >
+                          <option value={0} disabled>Выберите...</option>
+                          {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
+                        </select>
+                      </div>
+                      <div className="flex-1 min-w-[120px]">
+                        <label className="block text-xs font-medium text-gray-500">Количество</label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={row.quantity}
+                          onChange={e => updateSoloRowField(idx, 'quantity', e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end space-x-2">
-              <button type="button" onClick={cancelEdit} className="px-4 py-2 bg-gray-200 rounded-md">Отмена</button>
+              <button type="button" onClick={cancelEditObject} className="px-4 py-2 bg-gray-200 rounded-md">Отмена</button>
               <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Сохранить</button>
             </div>
           </form>
         </section>
       )}
 
-        {/* Переключатель вида журнала */}
-      <div className="flex items-center gap-2">
-        <h2 className="text-xl font-semibold mr-4">Журнал работ</h2>
-        <button
-          onClick={() => setViewMode('byBrigade')}
-          className={`px-3 py-1 rounded-md text-sm font-medium ${viewMode === 'byBrigade' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-        >
-          По бригадам
-        </button>
-        <button
-          onClick={() => setViewMode('table')}
-          className={`px-3 py-1 rounded-md text-sm font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-        >
-          Таблица
-        </button>
-      </div>
+      {/* Журнал работ – "По объектам" */}
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold">Журнал работ</h2>
+        {groupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
+        {groupedData.map(obj => (
+          <details key={obj.id ?? 'no-obj'} className="bg-white rounded-xl shadow" open>
+            <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
+              <span className="font-semibold">{obj.name}</span>
+              {isManager && (
+                <button onClick={(e) => { e.preventDefault(); startEditObject(obj.id); }} className="text-blue-600 hover:text-blue-800 text-sm ml-2">
+                  ✎ Редактировать объект
+                </button>
+              )}
+            </summary>
+            <div className="px-4 pb-4 space-y-3">
+              {/* Бригадные работы (группированные) */}
+              {obj.brigades && obj.brigades.size > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-gray-700">Бригадные работы</h3>
+                  {Array.from(obj.brigades.values()).map((group: any) => {
+                    const workTypeName = group.work_type?.name || '?';
+                    const unit = group.work_type?.unit || '';
+                    const rate = group.rate || 0;
+                    const totalAmount = group.totalAmount;
+                    const isPending = group.logs.some((l: any) => l.status === 'pending');
+                    return (
+                      <div key={group.key} className="ml-2 border-l-2 border-blue-200 pl-2">
+                        <div className={`flex items-center justify-between text-sm text-gray-600 ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
+                          <span>
+                            {isPending && '⏳ '}
+                            {formatDate(group.log_date)} — {workTypeName}: {group.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(totalAmount)}</span>
+                          </span>
+                          <button
+                            onClick={() => {
+                              if (confirm('Удалить весь бригадный наряд?')) {
+                                Promise.all(group.logs.map((l: any) => deleteWorkLog(l.id))).then(() => loadData());
+                              }
+                            }}
+                            className="text-red-600 hover:text-red-800 text-xs ml-2"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-      {/* Представление "По бригадам" */}
-      {viewMode === 'byBrigade' && (
-        <div className="space-y-4">
-          {groupedData.length === 0 && (
-            <p className="text-gray-500">Нет добавленных работ.</p>
-          )}
-          {groupedData.map(brigade => (
-            <details key={brigade.brigadeId ?? 'no-brig'} className="bg-white rounded-xl shadow" open>
-              <summary className="p-4 cursor-pointer hover:bg-gray-50 font-semibold">
-                {brigade.brigadeName}
-              </summary>
-              <div className="px-4 pb-4 space-y-3">
-                {brigade.workers.map((w: any) => (
-                  <div key={w.worker?.id ?? 'unassigned'}>
-                    {w.worker ? (
-                      <p className="text-sm font-medium text-gray-700 mb-1">{w.worker.full_name}</p>
-                    ) : (
-                      <p className="text-sm font-medium text-gray-700 mb-1">Без сотрудника</p>
-                    )}
-                    {(() => {
-                      const objMap = new Map<string, any[]>();
-                      w.logs.forEach((log: any) => {
-                        const objKey = log.object?.id ?? 'no-object';
-                        if (!objMap.has(objKey)) objMap.set(objKey, []);
-                        objMap.get(objKey)!.push(log);
-                      });
-                      return Array.from(objMap.entries()).map(([objKey, logs]) => {
-                        const objName = logs[0]?.object?.name || 'Без объекта';
-                        return (
-                          <div key={objKey} className="ml-4 mb-2">
-                            <p className="text-xs text-gray-500 mb-1">{objName}</p>
-                            <ul className="space-y-1">
-                              {logs.map((log: any) => {
-                                const workTypeName = log.work_type?.name || '?';
-                                const unit = log.work_type?.unit || '';
-                                const rate = log.work_type?.rate || 0;
-                                const isPending = log.status === 'pending';
-                                return (
-                                  <li key={log.id} className={`text-sm text-gray-600 flex items-center justify-between ${
-                                    isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''
-                                  }`}>
-                                    <span>
-                                      {isPending && '⏳ '}
-                                      {formatDate(log.log_date)} — {workTypeName}:{' '}
-                                      {log.quantity} {unit} ×{' '}
-                                      {formatMoney(rate)} ={' '}
-                                      <span className="font-medium">{formatMoney(log.amount)}</span>
-                                    </span>
-                                    {isManager && (
-                                      <span className="flex gap-1 ml-2">
-                                        <button onClick={() => startEdit(log)} className="text-blue-600 hover:text-blue-800 text-xs" title="Редактировать">✎</button>
-                                        <button onClick={() => handleDelete(log.id)} className="text-red-600 hover:text-red-800 text-xs" title="Удалить">✕</button>
-                                      </span>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                ))}
-              </div>
-            </details>
-          ))}
-        </div>
-      )}
-
-      {/* Представление "Таблица" */}
-      {viewMode === 'table' && (
-        <section className="bg-white rounded-xl shadow p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-            <h2 className="text-lg font-semibold">Таблица работ</h2>
-            <div className="flex gap-2">
-              <select value={filterObject} onChange={e => setFilterObject(Number(e.target.value))} className="rounded-md border-gray-300 text-sm">
-                <option value={0}>Все объекты</option>
-                {objects.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-              <select value={filterWorker} onChange={e => setFilterWorker(Number(e.target.value))} className="rounded-md border-gray-300 text-sm">
-                <option value={0}>Все сотрудники</option>
-                {workers.map(w => <option key={w.id} value={w.id}>{w.full_name}</option>)}
-              </select>
-              <button onClick={() => setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')} className="px-2 py-1 bg-gray-100 rounded text-sm">
-                {sortField === 'log_date' ? 'Дата' : 'Сумма'} {sortDir === 'asc' ? '↑' : '↓'}
-              </button>
+              {/* Одиночные сотрудники */}
+              {obj.soloWorkers && obj.soloWorkers.size > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-gray-700">Работы сотрудников</h3>
+                  {Array.from(obj.soloWorkers.values()).map((workerEntry: any) => (
+                    <div key={`solo-worker-${workerEntry.worker.id}`} className="ml-2 text-sm text-gray-600">
+                      <p className="font-medium">{workerEntry.worker.full_name}</p>
+                      <ul className="space-y-1">
+                        {workerEntry.logs.map((log: any) => {
+                          const workTypeName = log.work_type?.name || '?';
+                          const unit = log.work_type?.unit || '';
+                          const rate = log.work_type?.rate || 0;
+                          const isPending = log.status === 'pending';
+                          return (
+                            <li key={`solo-log-${log.id}`} className={`flex items-center justify-between ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
+                              <span>
+                                {isPending && '⏳ '}
+                                {formatDate(log.log_date)} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(log.amount)}</span>
+                              </span>
+                              <button onClick={() => handleDelete(log.id)} className="text-red-600 hover:text-red-800 text-xs ml-2">✕</button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase cursor-pointer" onClick={() => setSortField('log_date')}>Дата</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Объект</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Сотрудник</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-500 uppercase">Работа</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase">Кол-во</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase cursor-pointer" onClick={() => setSortField('amount')}>Сумма</th>
-                  {isManager && <th className="px-3 py-2 text-right font-medium text-gray-500 uppercase">Действия</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {filteredLogs.map(log => {
-                  const worker = getWorkerName(log.worker_id);
-                  const wt = getWorkType(log.work_type_id);
-                  const isPending = log.status === 'pending';
-                  return (
-                    <tr key={log.id} className={isPending ? 'bg-yellow-50' : ''}>
-                      <td className="px-3 py-2">{formatDate(log.log_date)}</td>
-                      <td className="px-3 py-2">{getObjectName(log.object_id)}</td>
-                      <td className="px-3 py-2">{worker}</td>
-                      <td className="px-3 py-2">{wt?.name}</td>
-                      <td className="px-3 py-2 text-right">{log.quantity} {wt?.unit}</td>
-                      <td className="px-3 py-2 text-right font-medium">{formatMoney(log.amount)}</td>
-                      {isManager && (
-                        <td className="px-3 py-2 text-right space-x-2">
-                          <button onClick={() => startEdit(log)} className="text-blue-600 hover:text-blue-800">Ред.</button>
-                          <button onClick={() => handleDelete(log.id)} className="text-red-600 hover:text-red-800">Уд.</button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+          </details>
+        ))}
+      </div>
     </div>
   );
 }

@@ -187,6 +187,7 @@ export async function addWorkLogForBrigade(
   date: string,
   objectId?: number
 ): Promise<WorkLog[]> {
+  // Получаем список сотрудников бригады
   const { data: workers, error: wError } = await supabase
     .from('workers')
     .select('id')
@@ -194,6 +195,7 @@ export async function addWorkLogForBrigade(
   if (wError) throw wError;
   if (!workers.length) throw new Error('В бригаде нет сотрудников');
 
+  // Получаем ставку вида работы
   const { data: wt, error: wtError } = await supabase
     .from('work_types')
     .select('rate')
@@ -206,15 +208,22 @@ export async function addWorkLogForBrigade(
 
   const logs: WorkLog[] = [];
   for (const w of workers) {
-    const log = await addWorkLog({
-      worker_id: w.id,
-      work_type_id: workTypeId,
-      quantity,
-      log_date: date,
-      object_id: objectId,
-    } as any);
-    await supabase.from('work_logs').update({ amount: amountPerWorker }).eq('id', log.id);
-    log.amount = amountPerWorker;
+    // Создаём запись с is_brigade = true
+    const { data: log, error } = await supabase
+      .from('work_logs')
+      .insert({
+        worker_id: w.id,
+        work_type_id: workTypeId,
+        quantity,
+        log_date: date,
+        object_id: objectId,
+        amount: amountPerWorker,
+        is_brigade: true,        // <-- ключевое изменение
+        status: 'pending',
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
     logs.push(log);
   }
   return logs;
@@ -333,10 +342,12 @@ export async function getWorkLogsGroupedByBrigade() {
   const { data: logs, error } = await supabase
     .from('work_logs')
     .select(`
-      id, log_date, quantity, amount, status,
+      id, log_date, quantity, amount, status, is_brigade,
       worker:workers!inner(id, full_name, brigade_id),
       work_type:work_types(id, name, unit, rate),
-      object:objects(id, name)
+      work_type_id,
+      object:objects(id, name),
+      object_id
     `)
     .order('log_date', { ascending: false });
 
