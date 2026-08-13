@@ -237,38 +237,58 @@ export async function getSalaryReport(startDate: string, endDate: string) {
       id, log_date, quantity, amount, status,
       worker:workers!inner(id, full_name, position, brigade_id),
       work_type:work_types(id, name, unit, rate),
-      object:objects(id, name)
+      object:objects(id, name, address)
     `)
     .gte('log_date', startDate)
     .lte('log_date', endDate)
-    .eq('status', 'approved');
+    .eq('status', 'approved')
+    .order('log_date', { ascending: false }); // запасная сортировка на уровне БД
 
   if (error) throw error;
 
-  const brigadeMap = new Map<number | null, any>();
+  // Явная сортировка по дате (убывание) на случай, если БД вернула неверный порядок
+  const sortedData = (data as any[]).sort((a, b) =>
+    b.log_date.localeCompare(a.log_date)
+  );
 
-  for (const log of data as any[]) {
+  // Группируем по бригадам
+  const brigadeMap = new Map<number | null, any>();
+  const noBrigade = {
+    brigadeId: null,
+    brigadeName: 'Без бригады',
+    workers: new Map<number, any>(),
+  };
+
+  for (const log of sortedData) {
     const worker = log.worker;
     const brigadeId = worker.brigade_id || null;
-
-    if (!brigadeMap.has(brigadeId)) {
-      brigadeMap.set(brigadeId, {
-        brigade: brigadeId ? { id: brigadeId, name: '' } : { id: null, name: 'Без бригады' },
-        workers: new Map<number, any>(),
-      });
+    let target;
+    if (brigadeId === null) {
+      target = noBrigade;
+    } else {
+      if (!brigadeMap.has(brigadeId)) {
+        brigadeMap.set(brigadeId, {
+          brigadeId,
+          brigadeName: '',
+          workers: new Map<number, any>(),
+        });
+      }
+      target = brigadeMap.get(brigadeId)!;
     }
-    const brigade = brigadeMap.get(brigadeId);
-
-    if (!brigade.workers.has(worker.id)) {
-      brigade.workers.set(worker.id, {
-        worker: worker,
+    if (!target.workers.has(worker.id)) {
+      target.workers.set(worker.id, {
+        worker: {
+          id: worker.id,
+          full_name: worker.full_name,
+          position: worker.position,
+        },
         total_amount: 0,
         details: [],
       });
     }
-    const w = brigade.workers.get(worker.id);
-    w.total_amount += log.amount;
-    w.details.push({
+    const wData = target.workers.get(worker.id);
+    wData.total_amount += log.amount;
+    wData.details.push({
       id: log.id,
       date: log.log_date,
       workTypeName: log.work_type?.name,
@@ -280,28 +300,47 @@ export async function getSalaryReport(startDate: string, endDate: string) {
     });
   }
 
-  // Загружаем названия бригад
+  // Получаем названия бригад
   const brigadeIds = Array.from(brigadeMap.keys()).filter(id => id !== null) as number[];
   if (brigadeIds.length > 0) {
-    const { data: brigadesData } = await supabase.from('brigades').select('id, name').in('id', brigadeIds);
+    const { data: brigadesData, error: brigadesError } = await supabase
+      .from('brigades')
+      .select('id, name')
+      .in('id', brigadeIds);
+    if (brigadesError) throw brigadesError;
     if (brigadesData) {
       for (const b of brigadesData) {
         const entry = brigadeMap.get(b.id);
-        if (entry) entry.brigade.name = b.name;
+        if (entry) entry.brigadeName = b.name;
       }
     }
   }
 
   // Формируем итоговый массив
   const result: any[] = [];
-  for (const [, brigade] of brigadeMap) {
-    const total_brigade_amount = Array.from(brigade.workers.values()).reduce((sum: number, w: any) => sum + w.total_amount, 0);
+  if (noBrigade.workers.size > 0) {
     result.push({
-      brigade: brigade.brigade,
-      workers: Array.from(brigade.workers.values()),
-      total_brigade_amount,
+      brigade: { id: null, name: noBrigade.brigadeName },
+      workers: Array.from(noBrigade.workers.values()),
+      total_brigade_amount: Array.from(noBrigade.workers.values()).reduce(
+        (sum: number, w: any) => sum + w.total_amount,
+        0
+      ),
     });
   }
+  for (const [, brigade] of brigadeMap) {
+    result.push({
+      brigade: { id: brigade.brigadeId, name: brigade.brigadeName || 'Бригада без названия' },
+      workers: Array.from(brigade.workers.values()),
+      total_brigade_amount: Array.from(brigade.workers.values()).reduce(
+        (sum: number, w: any) => sum + w.total_amount,
+        0
+      ),
+    });
+  }
+
+  // Сортировка бригад по названию для стабильного порядка
+  result.sort((a, b) => (a.brigade.name || '').localeCompare(b.brigade.name || ''));
 
   return result;
 }

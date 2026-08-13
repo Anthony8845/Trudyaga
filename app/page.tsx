@@ -94,6 +94,7 @@ export default function DashboardPage() {
             if (!objGroup.brigades.has(groupKey)) {
               objGroup.brigades.set(groupKey, {
                 key: groupKey,
+                brigadeName: brigade.brigadeName, // сохраняем название бригады
                 work_type: log.work_type,
                 quantity: log.quantity,
                 rate: log.work_type?.rate,
@@ -472,37 +473,44 @@ export default function DashboardPage() {
               )}
             </summary>
             <div className="px-4 pb-4 space-y-3">
-              {/* Бригадные работы (группированные) */}
+              {/* Бригадные работы (сгруппированные по бригадам) */}
               {obj.brigades && obj.brigades.size > 0 && (
-                <div className="space-y-2">
+                <div className="space-y-4">
                   <h3 className="text-sm font-medium text-gray-700">Бригадные работы</h3>
-                  {Array.from(obj.brigades.values()).map((group: any) => {
-                    const workTypeName = group.work_type?.name || '?';
-                    const unit = group.work_type?.unit || '';
-                    const rate = group.rate || 0;
-                    const totalAmount = group.totalAmount;
-                    const isPending = group.logs.some((l: any) => l.status === 'pending');
-                    return (
-                      <div key={group.key} className="ml-2 border-l-2 border-blue-200 pl-2">
-                        <div className={`flex items-center justify-between text-sm text-gray-600 ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
-                          <span>
-                            {isPending && '⏳ '}
-                            {formatDate(group.log_date)} — {workTypeName}: {group.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(totalAmount)}</span>
-                          </span>
-                          <button
-                            onClick={() => {
-                              if (confirm('Удалить весь бригадный наряд?')) {
-                                Promise.all(group.logs.map((l: any) => deleteWorkLog(l.id))).then(() => loadData());
-                              }
-                            }}
-                            className="text-red-600 hover:text-red-800 text-xs ml-2"
-                          >
-                            ✕
-                          </button>
+                  {(() => {
+                    const brigadeGroups = Array.from(obj.brigades.values()) as any[];
+                    const byBrigade = new Map<string, any[]>();
+                    brigadeGroups.forEach(group => {
+                      const name = group.brigadeName || 'Без названия';
+                      if (!byBrigade.has(name)) byBrigade.set(name, []);
+                      byBrigade.get(name)!.push(group);
+                    });
+                    return Array.from(byBrigade.entries()).map(([brigadeName, groups]) => (
+                      <div key={brigadeName} className="ml-2 border-l-2 border-blue-200 pl-2">
+                        <p className="text-sm font-medium">{brigadeName}</p>
+                        <div className="space-y-2">
+                          {groups.map(group => (
+                            <div key={group.key} className="flex items-center justify-between text-sm text-gray-600">
+                              <span>
+                                {group.logs.some((l: any) => l.status === 'pending') && '⏳ '}
+                                {formatDate(group.log_date)} — {group.work_type?.name || '?'}: {group.quantity} {group.work_type?.unit || ''} × {formatMoney(group.rate || 0)} = <span className="font-medium">{formatMoney(group.totalAmount)}</span>
+                              </span>
+                              <button
+                                onClick={() => {
+                                  if (confirm('Удалить весь бригадный наряд?')) {
+                                    Promise.all(group.logs.map((l: any) => deleteWorkLog(l.id))).then(() => loadData());
+                                  }
+                                }}
+                                className="text-red-600 hover:text-red-800 text-xs ml-2"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    );
-                  })}
+                    ));
+                  })()}
                 </div>
               )}
 
