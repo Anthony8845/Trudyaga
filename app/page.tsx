@@ -94,7 +94,7 @@ export default function DashboardPage() {
             if (!objGroup.brigades.has(groupKey)) {
               objGroup.brigades.set(groupKey, {
                 key: groupKey,
-                brigadeName: brigade.brigadeName, // сохраняем название бригады
+                brigadeName: brigade.brigadeName,
                 work_type: log.work_type,
                 quantity: log.quantity,
                 rate: log.work_type?.rate,
@@ -224,6 +224,7 @@ export default function DashboardPage() {
         ids: groupLogs.map((l: any) => l.id),
         work_type_id: first.work_type_id,
         quantity: String(first.quantity),
+        log_date: first.log_date, // добавлено
         groupSize: groupLogs.length,
       });
     });
@@ -233,6 +234,7 @@ export default function DashboardPage() {
       worker_name: log.worker.full_name,
       work_type_id: log.work_type_id,
       quantity: String(log.quantity),
+      log_date: log.log_date, // добавлено
     }));
 
     setEditBrigadeGroups(brigadeGroups);
@@ -265,6 +267,7 @@ export default function DashboardPage() {
               work_type_id: group.work_type_id,
               quantity: parseFloat(group.quantity),
               amount: amountPerWorker,
+              log_date: group.log_date, // добавлено
             })
           );
         });
@@ -279,6 +282,7 @@ export default function DashboardPage() {
             work_type_id: row.work_type_id,
             quantity: parseFloat(row.quantity),
             amount: newAmount,
+            log_date: row.log_date, // добавлено
           })
         );
       });
@@ -404,6 +408,16 @@ export default function DashboardPage() {
                           required
                         />
                       </div>
+                      <div className="flex-1 min-w-[150px]">
+                        <label className="block text-xs font-medium text-gray-500">Дата</label>
+                        <input
+                          type="date"
+                          value={group.log_date}
+                          onChange={e => updateBrigadeGroupField(idx, 'log_date', e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -440,6 +454,16 @@ export default function DashboardPage() {
                           min="0"
                           value={row.quantity}
                           onChange={e => updateSoloRowField(idx, 'quantity', e.target.value)}
+                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                          required
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[150px]">
+                        <label className="block text-xs font-medium text-gray-500">Дата</label>
+                        <input
+                          type="date"
+                          value={row.log_date}
+                          onChange={e => updateSoloRowField(idx, 'log_date', e.target.value)}
                           className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
                           required
                         />
