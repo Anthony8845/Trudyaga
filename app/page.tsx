@@ -51,6 +51,11 @@ export default function DashboardPage() {
   const [editBrigadeGroups, setEditBrigadeGroups] = useState<any[]>([]);
   const [editSoloRows, setEditSoloRows] = useState<any[]>([]);
 
+  // Комментарии (по объектам)
+  const [objectCommentsMap, setObjectCommentsMap] = useState<Record<number, any[]>>({});
+  const [newCommentMap, setNewCommentMap] = useState<Record<number, string>>({});
+  const [expandedObjectId, setExpandedObjectId] = useState<number | null>(null);
+
   const loadData = async () => {
     const [w, wt, b, obj] = await Promise.all([
       getWorkers(),
@@ -123,12 +128,93 @@ export default function DashboardPage() {
     if (noObject.brigades.size > 0 || noObject.soloWorkers.size > 0) {
       result.push(noObject);
     }
-    setGroupedData(result);
+
+    // Сортировка объектов по последней дате работы (по убыванию)
+    const sortedResult = result.sort((a: any, b: any) => {
+      const getMaxDate = (obj: any) => {
+        let maxDate = '';
+        // Проверяем бригадные работы
+        if (obj.brigades) {
+          for (const group of obj.brigades.values()) {
+            for (const log of group.logs) {
+              if (log.log_date > maxDate) maxDate = log.log_date;
+            }
+          }
+        }
+        // Проверяем персональные работы
+        if (obj.soloWorkers) {
+          for (const entry of obj.soloWorkers.values()) {
+            for (const log of entry.logs) {
+              if (log.log_date > maxDate) maxDate = log.log_date;
+            }
+          }
+        }
+        return maxDate;
+      };
+      return getMaxDate(b).localeCompare(getMaxDate(a));
+    });
+
+    setGroupedData(sortedResult);
   };
 
   useEffect(() => {
     loadData();
   }, []);
+
+  const loadComments = async (objectId: number) => {
+    if (!objectId) return;
+    const { data, error } = await supabase
+      .from('object_comments')
+      .select('id, comment, created_at, author_name')
+      .eq('object_id', objectId)
+      .order('created_at', { ascending: true });
+    if (!error) {
+      setObjectCommentsMap(prev => ({ ...prev, [objectId]: data || [] }));
+    }
+  };
+
+  const handleAddComment = async (objectId: number) => {
+    const commentText = (newCommentMap[objectId] || '').trim();
+    if (!objectId || !commentText) return;
+
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return;
+
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('user_id', userId)
+      .single();
+
+    const role = profileData?.role || 'brigadier';
+    const authorName = user?.login || (role === 'supervisor' ? 'Руководитель' : 'Бригадир');
+
+    const { error } = await supabase.from('object_comments').insert({
+      object_id: objectId,
+      user_id: userId,
+      comment: commentText,
+      author_name: authorName,
+    });
+
+    if (error) {
+      alert('Ошибка добавления комментария');
+      return;
+    }
+
+    setNewCommentMap(prev => ({ ...prev, [objectId]: '' }));
+    loadComments(objectId);
+  };
+
+  const handleDeleteComment = async (commentId: number, objectId: number) => {
+    if (!confirm('Удалить комментарий?')) return;
+    const { error } = await supabase.from('object_comments').delete().eq('id', commentId);
+    if (error) {
+      alert('Ошибка удаления комментария');
+      return;
+    }
+    loadComments(objectId);
+  };
 
   const resetBatchForm = () => {
     setTargetType('worker');
@@ -224,7 +310,7 @@ export default function DashboardPage() {
         ids: groupLogs.map((l: any) => l.id),
         work_type_id: first.work_type_id,
         quantity: String(first.quantity),
-        log_date: first.log_date, // добавлено
+        log_date: first.log_date,
         groupSize: groupLogs.length,
       });
     });
@@ -234,7 +320,7 @@ export default function DashboardPage() {
       worker_name: log.worker.full_name,
       work_type_id: log.work_type_id,
       quantity: String(log.quantity),
-      log_date: log.log_date, // добавлено
+      log_date: log.log_date,
     }));
 
     setEditBrigadeGroups(brigadeGroups);
@@ -267,7 +353,7 @@ export default function DashboardPage() {
               work_type_id: group.work_type_id,
               quantity: parseFloat(group.quantity),
               amount: amountPerWorker,
-              log_date: group.log_date, // добавлено
+              log_date: group.log_date,
             })
           );
         });
@@ -282,7 +368,7 @@ export default function DashboardPage() {
             work_type_id: row.work_type_id,
             quantity: parseFloat(row.quantity),
             amount: newAmount,
-            log_date: row.log_date, // добавлено
+            log_date: row.log_date,
           })
         );
       });
@@ -487,7 +573,21 @@ export default function DashboardPage() {
         <h2 className="text-xl font-semibold">Журнал работ</h2>
         {groupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
         {groupedData.map(obj => (
-          <details key={obj.id ?? 'no-obj'} className="bg-white rounded-xl shadow" open>
+          <details
+            key={obj.id ?? 'no-obj'}
+            className="bg-white rounded-xl shadow"
+            open
+            onToggle={(e) => {
+              if ((e.target as HTMLDetailsElement).open) {
+                if (obj.id !== null) {
+                  setExpandedObjectId(obj.id);
+                  loadComments(obj.id);
+                }
+              } else if (expandedObjectId === obj.id) {
+                setExpandedObjectId(null);
+              }
+            }}
+          >
             <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
               <span className="font-semibold">{obj.name}</span>
               {isManager && (
@@ -564,6 +664,61 @@ export default function DashboardPage() {
                       </ul>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Комментарии (только для реальных объектов) */}
+              {obj.id !== null && (
+                <div className="bg-olive-50 mt-4 border-t p-3">
+                  <h4 className="text-sm font-semibold mb-2">Комментарии</h4>
+                  {(() => {
+                    const comments = objectCommentsMap[obj.id] || [];
+                    const commentInput = newCommentMap[obj.id] || '';
+                    return (
+                      <>
+                        {comments.length === 0 ? (
+                          <p className="text-sm text-gray-500">Нет комментариев</p>
+                        ) : (
+                          <ul className="space-y-2">
+                            {comments.map(c => (
+                              <li key={c.id} className="text-sm text-gray-600">
+                                <div className="flex justify-between items-start">
+                                  <span className="font-medium">{c.author_name || 'Сотрудник'}</span>
+                                  <span className="text-gray-400 text-xs">{new Date(c.created_at).toLocaleString('ru-RU')}</span>
+                                </div>
+                                <p>{c.comment}</p>
+                                {(user?.role === 'supervisor' || c.user_id === user?.id) && (
+                                  <button
+                                    onClick={() => handleDeleteComment(c.id, obj.id)}
+                                    className="text-red-500 hover:text-red-700 text-xs"
+                                  >
+                                    Удалить
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {isManager && (
+                          <div className="mt-3 flex gap-2">
+                            <input
+                              type="text"
+                              value={commentInput}
+                              onChange={e => setNewCommentMap(prev => ({ ...prev, [obj.id]: e.target.value }))}
+                              placeholder="Добавить комментарий..."
+                              className="flex-1 rounded-md border-gray-300 shadow-sm text-sm"
+                            />
+                            <button
+                              onClick={() => handleAddComment(obj.id)}
+                              className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                            >
+                              Отправить
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
