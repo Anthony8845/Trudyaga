@@ -3,9 +3,9 @@ import { supabase } from './supabase';
 
 export interface Worker {
   id: number;
-  full_name: string;  // в БД теперь full_name
+  full_name: string;
   position: string;
-  brigade_id?: number;
+  brigade_id?: number | null;
 }
 
 export interface WorkType {
@@ -13,18 +13,7 @@ export interface WorkType {
   name: string;
   unit: string;
   rate: number;
-}
-
-
-export interface Brigade {
-  id: number;
-  name: string;
-}
-
-export interface ObjectItem {
-  id: number;
-  name: string;
-  address?: string;
+  category_id?: number | null;
 }
 
 export interface WorkLog {
@@ -37,45 +26,28 @@ export interface WorkLog {
   status: 'pending' | 'approved' | 'rejected';
   confirmed_by?: string;
   confirmed_at?: string;
-  object_id?: number;          // новый
-  // при выборке с join
-  object?: ObjectItem;
-  worker?: Worker;
-  work_type?: WorkType;
+  object_id?: number | null;
+  is_brigade?: boolean;
+  created_by?: string;
+  created_at?: string;
 }
 
-// ---------- Объекты ----------
-export async function getObjects(): Promise<ObjectItem[]> {
-  const { data, error } = await supabase.from('objects').select('*');
-  if (error) throw error;
-  return data;
+export interface Brigade {
+  id: number;
+  name: string;
 }
 
-export async function addObject(obj: Omit<ObjectItem, 'id'>): Promise<ObjectItem> {
-  const { data, error } = await supabase.from('objects').insert(obj).select().single();
-  if (error) throw error;
-  return data;
+export interface ObjectItem {
+  id: number;
+  name: string;
+  address?: string;
+  created_at?: string;
 }
 
-export async function updateObject(obj: ObjectItem): Promise<void> {
-  const { id, ...fields } = obj;
-  const { error } = await supabase.from('objects').update(fields).eq('id', id);
-  if (error) throw error;
-}
-
-export async function deleteObject(id: number): Promise<void> {
-  const { error } = await supabase.from('objects').delete().eq('id', id);
-  if (error) throw error;
-}
-
-export async function updateWorkLog(id: number, updates: Partial<WorkLog>): Promise<void> {
-  const { error } = await supabase.from('work_logs').update(updates).eq('id', id);
-  if (error) throw error;
-}
-
-export async function deleteWorkLog(id: number): Promise<void> {
-  const { error } = await supabase.from('work_logs').delete().eq('id', id);
-  if (error) throw error;
+export interface WorkCategory {
+  id: number;
+  name: string;
+  created_at?: string;
 }
 
 // ---------- Бригады ----------
@@ -117,7 +89,6 @@ export async function addWorker(worker: Omit<Worker, 'id'>): Promise<Worker> {
 
 export async function updateWorker(worker: Worker): Promise<void> {
   const { id, ...fields } = worker;
-  // Явно преобразуем undefined в null для nullable-полей
   const cleaned: any = {};
   for (const [key, value] of Object.entries(fields)) {
     cleaned[key] = value === undefined ? null : value;
@@ -145,7 +116,7 @@ export async function addWorkType(wt: Omit<WorkType, 'id'>): Promise<WorkType> {
 }
 
 export async function updateWorkType(wt: WorkType): Promise<void> {
-  const { id, ...fields } = wt;  // убираем id
+  const { id, ...fields } = wt;
   const { error } = await supabase.from('work_types').update(fields).eq('id', id);
   if (error) throw error;
 }
@@ -155,11 +126,134 @@ export async function deleteWorkType(id: number): Promise<void> {
   if (error) throw error;
 }
 
+// ---------- Категории видов работ ----------
+export async function getWorkCategories(): Promise<WorkCategory[]> {
+  const { data, error } = await supabase.from('work_categories').select('*').order('name');
+  if (error) throw error;
+  return data;
+}
+
+export async function addWorkCategory(name: string): Promise<WorkCategory> {
+  const { data, error } = await supabase.from('work_categories').insert({ name }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateWorkCategory(category: WorkCategory): Promise<void> {
+  const { id, ...fields } = category;
+  const { error } = await supabase.from('work_categories').update(fields).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteWorkCategory(id: number): Promise<void> {
+  const { error } = await supabase.from('work_categories').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------- Объекты ----------
+export async function getObjects(): Promise<ObjectItem[]> {
+  const { data, error } = await supabase.from('objects').select('*');
+  if (error) throw error;
+  return data;
+}
+
+export async function addObject(obj: Omit<ObjectItem, 'id' | 'created_at'>): Promise<ObjectItem> {
+  const { data, error } = await supabase.from('objects').insert(obj).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateObject(obj: ObjectItem): Promise<void> {
+  const { id, ...fields } = obj;
+  const { error } = await supabase.from('objects').update(fields).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteObject(id: number): Promise<void> {
+  const { error } = await supabase.from('objects').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ---------- Журнал работ ----------
 export async function getWorkLogs(): Promise<WorkLog[]> {
   const { data, error } = await supabase.from('work_logs').select('*');
   if (error) throw error;
   return data;
+}
+
+export async function getWorkLogsGroupedByBrigade() {
+  const { data, error } = await supabase
+    .from('work_logs')
+    .select(`
+      id, log_date, quantity, amount, status, is_brigade,
+      worker:workers!inner(id, full_name, brigade_id),
+      work_type:work_types(id, name, unit, rate),
+      work_type_id,
+      object:objects(id, name),
+      object_id
+    `)
+    .order('log_date', { ascending: false });
+
+  if (error) throw error;
+
+  const brigadeSet = new Set<number>();
+  const logsTyped = data as any[];
+  logsTyped.forEach(log => {
+    if (log.worker?.brigade_id) brigadeSet.add(log.worker.brigade_id);
+  });
+
+  const brigadeMap = new Map<number, string>();
+  if (brigadeSet.size > 0) {
+    const { data: brigades } = await supabase
+      .from('brigades')
+      .select('id, name')
+      .in('id', Array.from(brigadeSet));
+    if (brigades) {
+      brigades.forEach((b: any) => brigadeMap.set(b.id, b.name));
+    }
+  }
+
+  const grouped = new Map<number, any>();
+  const noBrigade: any[] = [];
+
+  logsTyped.forEach(log => {
+    const brigadeId = log.worker?.brigade_id || null;
+    if (brigadeId === null) {
+      noBrigade.push(log);
+      return;
+    }
+    if (!grouped.has(brigadeId)) {
+      grouped.set(brigadeId, new Map<number, any>());
+    }
+    const workersMap = grouped.get(brigadeId)!;
+    if (!workersMap.has(log.worker.id)) {
+      workersMap.set(log.worker.id, {
+        worker: log.worker,
+        logs: [],
+      });
+    }
+    workersMap.get(log.worker.id).logs.push(log);
+  });
+
+  const result: any[] = [];
+  for (const [brigadeId, workersMap] of grouped) {
+    result.push({
+      brigadeId,
+      brigadeName: brigadeMap.get(brigadeId) || 'Бригада без названия',
+      workers: Array.from(workersMap.values()),
+    });
+  }
+  if (noBrigade.length > 0) {
+    result.push({
+      brigadeId: null,
+      brigadeName: 'Без бригады',
+      workers: [{
+        worker: null,
+        logs: noBrigade,
+      }],
+    });
+  }
+  return result;
 }
 
 export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount'> & { status?: string }): Promise<WorkLog> {
@@ -174,7 +268,7 @@ export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount'> & { status?
   const { data, error } = await supabase
     .from('work_logs')
     .insert({ ...log, amount, status: log.status || 'pending' })
-    .select('*, worker:workers(*), work_type:work_types(*), object:objects(*)')
+    .select()
     .single();
   if (error) throw error;
   return data;
@@ -187,7 +281,6 @@ export async function addWorkLogForBrigade(
   date: string,
   objectId?: number
 ): Promise<WorkLog[]> {
-  // Получаем список сотрудников бригады
   const { data: workers, error: wError } = await supabase
     .from('workers')
     .select('id')
@@ -195,7 +288,6 @@ export async function addWorkLogForBrigade(
   if (wError) throw wError;
   if (!workers.length) throw new Error('В бригаде нет сотрудников');
 
-  // Получаем ставку вида работы
   const { data: wt, error: wtError } = await supabase
     .from('work_types')
     .select('rate')
@@ -208,28 +300,32 @@ export async function addWorkLogForBrigade(
 
   const logs: WorkLog[] = [];
   for (const w of workers) {
-    // Создаём запись с is_brigade = true
-    const { data: log, error } = await supabase
-      .from('work_logs')
-      .insert({
-        worker_id: w.id,
-        work_type_id: workTypeId,
-        quantity,
-        log_date: date,
-        object_id: objectId,
-        amount: amountPerWorker,
-        is_brigade: true,        // <-- ключевое изменение
-        status: 'pending',
-      })
-      .select('*')
-      .single();
-    if (error) throw error;
+    const log = await addWorkLog({
+      worker_id: w.id,
+      work_type_id: workTypeId,
+      quantity,
+      log_date: date,
+      object_id: objectId,
+      is_brigade: true, // помечаем как бригадную
+    } as any);
+    await supabase.from('work_logs').update({ amount: amountPerWorker }).eq('id', log.id);
+    log.amount = amountPerWorker;
     logs.push(log);
   }
   return logs;
 }
 
-// ---------- Отчёт ----------
+export async function updateWorkLog(id: number, updates: Partial<WorkLog>): Promise<void> {
+  const { error } = await supabase.from('work_logs').update(updates).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteWorkLog(id: number): Promise<void> {
+  const { error } = await supabase.from('work_logs').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ---------- Зарплатный отчёт ----------
 export async function getSalaryReport(startDate: string, endDate: string) {
   const { data, error } = await supabase
     .from('work_logs')
@@ -242,16 +338,12 @@ export async function getSalaryReport(startDate: string, endDate: string) {
     .gte('log_date', startDate)
     .lte('log_date', endDate)
     .eq('status', 'approved')
-    .order('log_date', { ascending: false }); // запасная сортировка на уровне БД
+    .order('log_date', { ascending: false });
 
   if (error) throw error;
 
-  // Явная сортировка по дате (убывание) на случай, если БД вернула неверный порядок
-  const sortedData = (data as any[]).sort((a, b) =>
-    b.log_date.localeCompare(a.log_date)
-  );
+  const sortedData = (data as any[]).sort((a, b) => b.log_date.localeCompare(a.log_date));
 
-  // Группируем по бригадам
   const brigadeMap = new Map<number | null, any>();
   const noBrigade = {
     brigadeId: null,
@@ -300,7 +392,6 @@ export async function getSalaryReport(startDate: string, endDate: string) {
     });
   }
 
-  // Получаем названия бригад
   const brigadeIds = Array.from(brigadeMap.keys()).filter(id => id !== null) as number[];
   if (brigadeIds.length > 0) {
     const { data: brigadesData, error: brigadesError } = await supabase
@@ -316,142 +407,26 @@ export async function getSalaryReport(startDate: string, endDate: string) {
     }
   }
 
-  // Формируем итоговый массив
   const result: any[] = [];
   if (noBrigade.workers.size > 0) {
+    const workersArray = Array.from(noBrigade.workers.values()) as any[];
+    const total = workersArray.reduce((sum: number, w: any) => sum + w.total_amount, 0);
     result.push({
       brigade: { id: null, name: noBrigade.brigadeName },
-      workers: Array.from(noBrigade.workers.values()),
-      total_brigade_amount: Array.from(noBrigade.workers.values()).reduce(
-        (sum: number, w: any) => sum + w.total_amount,
-        0
-      ),
+      workers: workersArray,
+      total_brigade_amount: total,
     });
   }
   for (const [, brigade] of brigadeMap) {
+    const workersArray = Array.from(brigade.workers.values()) as any[];
+    const total = workersArray.reduce((sum: number, w: any) => sum + w.total_amount, 0);
     result.push({
       brigade: { id: brigade.brigadeId, name: brigade.brigadeName || 'Бригада без названия' },
-      workers: Array.from(brigade.workers.values()),
-      total_brigade_amount: Array.from(brigade.workers.values()).reduce(
-        (sum: number, w: any) => sum + w.total_amount,
-        0
-      ),
+      workers: workersArray,
+      total_brigade_amount: total,
     });
   }
 
-  // Сортировка бригад по названию для стабильного порядка
   result.sort((a, b) => (a.brigade.name || '').localeCompare(b.brigade.name || ''));
-
-  return result;
-}
-
-
-// Получить все неподтверждённые записи (для руководителя)
-export async function getPendingWorkLogs(): Promise<WorkLog[]> {
-  const { data, error } = await supabase
-    .from('work_logs')
-    .select('*')
-    .eq('status', 'pending')
-    .order('log_date', { ascending: false });
-  if (error) throw error;
-  return data;
-}
-
-// Подтвердить запись
-export async function approveWorkLog(id: number): Promise<void> {
-  const user = (await supabase.auth.getUser()).data.user;
-  const { error } = await supabase
-    .from('work_logs')
-    .update({ status: 'approved', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
-}
-
-// Отклонить запись
-export async function rejectWorkLog(id: number): Promise<void> {
-  const user = (await supabase.auth.getUser()).data.user;
-  const { error } = await supabase
-    .from('work_logs')
-    .update({ status: 'rejected', confirmed_by: user?.id, confirmed_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) throw error;
-}
-
-export async function getWorkLogsGroupedByBrigade() {
-  const { data: logs, error } = await supabase
-    .from('work_logs')
-    .select(`
-      id, log_date, quantity, amount, status, is_brigade,
-      worker:workers!inner(id, full_name, brigade_id),
-      work_type:work_types(id, name, unit, rate),
-      work_type_id,
-      object:objects(id, name),
-      object_id
-    `)
-    .order('log_date', { ascending: false });
-
-  if (error) throw error;
-
-  // Собираем все уникальные brigade_id из работ
-  const brigadeSet = new Set<number>();
-  const logsTyped = logs as any[];
-  logsTyped.forEach(log => {
-    if (log.worker?.brigade_id) brigadeSet.add(log.worker.brigade_id);
-  });
-
-  // Получаем названия бригад
-  const brigadeMap = new Map<number, string>();
-  if (brigadeSet.size > 0) {
-    const { data: brigades } = await supabase
-      .from('brigades')
-      .select('id, name')
-      .in('id', Array.from(brigadeSet));
-    if (brigades) {
-      brigades.forEach((b: any) => brigadeMap.set(b.id, b.name));
-    }
-  }
-
-  // Группируем: бригада -> сотрудник -> работы
-  const grouped = new Map<number, any>(); // brigadeId -> workersMap
-  const noBrigade: any[] = []; // работы без бригады
-
-  logsTyped.forEach(log => {
-    const brigadeId = log.worker?.brigade_id || null;
-    if (brigadeId === null) {
-      noBrigade.push(log);
-      return;
-    }
-    if (!grouped.has(brigadeId)) {
-      grouped.set(brigadeId, new Map<number, any>());
-    }
-    const workersMap = grouped.get(brigadeId)!;
-    if (!workersMap.has(log.worker.id)) {
-      workersMap.set(log.worker.id, {
-        worker: log.worker,
-        logs: [],
-      });
-    }
-    workersMap.get(log.worker.id).logs.push(log);
-  });
-
-  // Преобразуем в массив для рендеринга
-  const result: any[] = [];
-  for (const [brigadeId, workersMap] of grouped) {
-    result.push({
-      brigadeId,
-      brigadeName: brigadeMap.get(brigadeId) || 'Бригада без названия',
-      workers: Array.from(workersMap.values()),
-    });
-  }
-  if (noBrigade.length > 0) {
-    result.push({
-      brigadeId: null,
-      brigadeName: 'Без бригады',
-      workers: [{
-        worker: null,
-        logs: noBrigade,
-      }],
-    });
-  }
   return result;
 }

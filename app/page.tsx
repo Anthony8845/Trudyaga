@@ -16,6 +16,8 @@ import {
   WorkType,
   Brigade,
   ObjectItem,
+  getWorkCategories,
+  WorkCategory,
 } from '@/lib/data';
 import { formatDate, formatMoney } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -34,6 +36,7 @@ export default function DashboardPage() {
   const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
   const [brigades, setBrigades] = useState<Brigade[]>([]);
   const [objects, setObjects] = useState<ObjectItem[]>([]);
+  const [categories, setCategories] = useState<WorkCategory[]>([]);
   const [groupedData, setGroupedData] = useState<any[]>([]);
 
   // Форма добавления
@@ -57,16 +60,18 @@ export default function DashboardPage() {
   const [expandedObjectId, setExpandedObjectId] = useState<number | null>(null);
 
   const loadData = async () => {
-    const [w, wt, b, obj] = await Promise.all([
+    const [w, wt, b, obj, cats] = await Promise.all([
       getWorkers(),
       getWorkTypes(),
       getBrigades(),
       getObjects(),
+      getWorkCategories(),
     ]);
     setWorkers(w);
     setWorkTypes(wt);
     setBrigades(b);
     setObjects(obj);
+    setCategories(cats);
 
     const grouped = await getWorkLogsGroupedByBrigade();
 
@@ -129,11 +134,10 @@ export default function DashboardPage() {
       result.push(noObject);
     }
 
-    // Сортировка объектов по последней дате работы (по убыванию)
+    // Сортировка объектов по максимальной дате работы (от новых к старым)
     const sortedResult = result.sort((a: any, b: any) => {
       const getMaxDate = (obj: any) => {
         let maxDate = '';
-        // Проверяем бригадные работы
         if (obj.brigades) {
           for (const group of obj.brigades.values()) {
             for (const log of group.logs) {
@@ -141,7 +145,6 @@ export default function DashboardPage() {
             }
           }
         }
-        // Проверяем персональные работы
         if (obj.soloWorkers) {
           for (const entry of obj.soloWorkers.values()) {
             for (const log of entry.logs) {
@@ -326,12 +329,14 @@ export default function DashboardPage() {
     setEditBrigadeGroups(brigadeGroups);
     setEditSoloRows(soloRows);
     setEditingObjectId(objectId);
+    document.body.style.overflow = 'hidden';
   };
 
   const cancelEditObject = () => {
     setEditingObjectId(null);
     setEditBrigadeGroups([]);
     setEditSoloRows([]);
+    document.body.style.overflow = 'auto';
   };
 
   const handleEditObjectSubmit = async (e: React.FormEvent) => {
@@ -398,174 +403,314 @@ export default function DashboardPage() {
           <form onSubmit={handleBatchSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700">Объект</label>
-              <select value={selectedObjectId} onChange={e => setSelectedObjectId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+              <select
+                value={selectedObjectId}
+                onChange={e => setSelectedObjectId(Number(e.target.value))}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                required
+              >
                 <option value={0} disabled>Выберите объект</option>
-                {objects.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                {objects.map(o => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
               </select>
             </div>
+
             <div className="flex space-x-4">
-              <label className="inline-flex items-center"><input type="radio" value="worker" checked={targetType === 'worker'} onChange={() => setTargetType('worker')} className="text-blue-600" /><span className="ml-2 text-sm">Сотруднику</span></label>
-              <label className="inline-flex items-center"><input type="radio" value="brigade" checked={targetType === 'brigade'} onChange={() => setTargetType('brigade')} className="text-blue-600" /><span className="ml-2 text-sm">Бригаде</span></label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  value="worker"
+                  checked={targetType === 'worker'}
+                  onChange={() => setTargetType('worker')}
+                  className="text-blue-600"
+                />
+                <span className="ml-2 text-sm">Сотруднику</span>
+              </label>
+              <label className="inline-flex items-center">
+                <input
+                  type="radio"
+                  value="brigade"
+                  checked={targetType === 'brigade'}
+                  onChange={() => setTargetType('brigade')}
+                  className="text-blue-600"
+                />
+                <span className="ml-2 text-sm">Бригаде</span>
+              </label>
             </div>
+
             {targetType === 'worker' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700">Сотрудник</label>
-                <select value={selectedWorkerId} onChange={e => setSelectedWorkerId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                <select
+                  value={selectedWorkerId}
+                  onChange={e => setSelectedWorkerId(Number(e.target.value))}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                  required
+                >
                   <option value={0} disabled>Выберите...</option>
-                  {workers.map(w => <option key={w.id} value={w.id}>{w.full_name}</option>)}
+                  {workers.map(w => (
+                    <option key={w.id} value={w.id}>{w.full_name}</option>
+                  ))}
                 </select>
               </div>
             )}
+
             {targetType === 'brigade' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700">Бригада</label>
-                <select value={selectedBrigadeId} onChange={e => setSelectedBrigadeId(Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                <select
+                  value={selectedBrigadeId}
+                  onChange={e => setSelectedBrigadeId(Number(e.target.value))}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                  required
+                >
                   <option value={0} disabled>Выберите...</option>
-                  {brigades.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  {brigades.map(b => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
                 </select>
               </div>
             )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700">Дата</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required />
+              <input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                required
+              />
             </div>
+
             <div className="space-y-3">
               {rows.map((row, idx) => (
                 <div key={row.id} className="flex flex-wrap items-end gap-2">
                   <div className="flex-1 min-w-[200px]">
                     <label className="block text-xs font-medium text-gray-500">Вид работы</label>
-                    <select value={row.work_type_id} onChange={e => updateRow(idx, 'work_type_id', Number(e.target.value))} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" required>
+                    <select
+                      value={row.work_type_id}
+                      onChange={e => updateRow(idx, 'work_type_id', Number(e.target.value))}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                      required
+                    >
                       <option value={0} disabled>Выберите...</option>
-                      {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
+                      {categories.map(cat => (
+                        <optgroup key={cat.id} label={cat.name}>
+                          {workTypes
+                            .filter(wt => wt.category_id === cat.id)
+                            .map(wt => (
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                            ))}
+                        </optgroup>
+                      ))}
+                      {/* Виды без категории */}
+                      {workTypes.some(wt => wt.category_id == null) && (
+                        <optgroup label="Без категории">
+                          {workTypes
+                            .filter(wt => wt.category_id == null)
+                            .map(wt => (
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                            ))}
+                        </optgroup>
+                      )}
                     </select>
                   </div>
                   <div className="flex-1 min-w-[120px]">
                     <label className="block text-xs font-medium text-gray-500">Количество</label>
-                    <input type="number" step="any" min="0" value={row.quantity} onChange={e => updateRow(idx, 'quantity', e.target.value)} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm" required />
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={row.quantity}
+                      onChange={e => updateRow(idx, 'quantity', e.target.value)}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                      required
+                    />
                   </div>
                   {rows.length > 1 && (
-                    <button type="button" onClick={() => setRows(prev => prev.filter((_, i) => i !== idx))} className="text-red-500 hover:text-red-700 text-sm" title="Удалить строку">✕</button>
+                    <button
+                      type="button"
+                      onClick={() => setRows(prev => prev.filter((_, i) => i !== idx))}
+                      className="text-red-500 hover:text-red-700 text-sm"
+                      title="Удалить строку"
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
               ))}
             </div>
+
             <div className="flex justify-between items-center">
-              <button type="button" onClick={addRow} className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 border border-blue-200">+ Добавить ещё</button>
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Сохранить все</button>
+              <button
+                type="button"
+                onClick={addRow}
+                className="px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 border border-blue-200"
+              >
+                + Добавить ещё
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Сохранить все
+              </button>
             </div>
           </form>
         </section>
       )}
 
-      {/* Редактирование объекта */}
+      {/* Модальное окно редактирования */}
       {isManager && editingObjectId !== null && (
-        <section className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">
-            Редактирование объекта: {objects.find(o => o.id === editingObjectId)?.name || 'Без объекта'}
-          </h2>
-          <form onSubmit={handleEditObjectSubmit} className="space-y-6">
-            {editBrigadeGroups.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">Бригадные работы</h3>
-                <div className="space-y-3">
-                  {editBrigadeGroups.map((group, idx) => (
-                    <div key={group.key} className="flex flex-wrap items-end gap-2">
-                      <div className="flex-1 min-w-[200px]">
-                        <label className="block text-xs font-medium text-gray-500">Вид работы</label>
-                        <select
-                          value={group.work_type_id}
-                          onChange={e => updateBrigadeGroupField(idx, 'work_type_id', Number(e.target.value))}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        >
-                          <option value={0} disabled>Выберите...</option>
-                          {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
-                        </select>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
+            <h2 className="text-lg font-semibold mb-4">
+              Редактирование объекта: {objects.find(o => o.id === editingObjectId)?.name || 'Без объекта'}
+            </h2>
+            <form onSubmit={handleEditObjectSubmit} className="space-y-6">
+              {editBrigadeGroups.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Бригадные работы</h3>
+                  <div className="space-y-3">
+                    {editBrigadeGroups.map((group, idx) => (
+                      <div key={group.key} className="flex flex-wrap items-end gap-2">
+                        <div className="flex-1 min-w-[200px]">
+                          <label className="block text-xs font-medium text-gray-500">Вид работы</label>
+                          <select
+                            value={group.work_type_id}
+                            onChange={e => updateBrigadeGroupField(idx, 'work_type_id', Number(e.target.value))}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          >
+                            <option value={0} disabled>Выберите...</option>
+                            {categories.map(cat => (
+                              <optgroup key={cat.id} label={cat.name}>
+                                {workTypes
+                                  .filter(wt => wt.category_id === cat.id)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                                  ))}
+                              </optgroup>
+                            ))}
+                            {workTypes.some(wt => wt.category_id == null) && (
+                              <optgroup label="Без категории">
+                                {workTypes
+                                  .filter(wt => wt.category_id == null)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                                  ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        </div>
+                        <div className="flex-1 min-w-[120px]">
+                          <label className="block text-xs font-medium text-gray-500">Количество</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={group.quantity}
+                            onChange={e => updateBrigadeGroupField(idx, 'quantity', e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          />
+                        </div>
+                        <div className="flex-1 min-w-[150px]">
+                          <label className="block text-xs font-medium text-gray-500">Дата</label>
+                          <input
+                            type="date"
+                            value={group.log_date}
+                            onChange={e => updateBrigadeGroupField(idx, 'log_date', e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          />
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="block text-xs font-medium text-gray-500">Количество</label>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={group.quantity}
-                          onChange={e => updateBrigadeGroupField(idx, 'quantity', e.target.value)}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-medium text-gray-500">Дата</label>
-                        <input
-                          type="date"
-                          value={group.log_date}
-                          onChange={e => updateBrigadeGroupField(idx, 'log_date', e.target.value)}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {editSoloRows.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">Работы сотрудников</h3>
-                <div className="space-y-3">
-                  {editSoloRows.map((row, idx) => (
-                    <div key={row.id} className="flex flex-wrap items-end gap-2 border p-2 rounded bg-gray-50">
-                      <div className="min-w-[150px]">
-                        <label className="block text-xs font-medium text-gray-500">Сотрудник</label>
-                        <div className="text-sm font-medium">{row.worker_name}</div>
+              {editSoloRows.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">Работы сотрудников</h3>
+                  <div className="space-y-3">
+                    {editSoloRows.map((row, idx) => (
+                      <div key={row.id} className="flex flex-wrap items-end gap-2 border p-2 rounded bg-gray-50">
+                        <div className="min-w-[150px]">
+                          <label className="block text-xs font-medium text-gray-500">Сотрудник</label>
+                          <div className="text-sm font-medium">{row.worker_name}</div>
+                        </div>
+                        <div className="flex-1 min-w-[200px]">
+                          <label className="block text-xs font-medium text-gray-500">Вид работы</label>
+                          <select
+                            value={row.work_type_id}
+                            onChange={e => updateSoloRowField(idx, 'work_type_id', Number(e.target.value))}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          >
+                            <option value={0} disabled>Выберите...</option>
+                            {categories.map(cat => (
+                              <optgroup key={cat.id} label={cat.name}>
+                                {workTypes
+                                  .filter(wt => wt.category_id === cat.id)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                                  ))}
+                              </optgroup>
+                            ))}
+                            {workTypes.some(wt => wt.category_id == null) && (
+                              <optgroup label="Без категории">
+                                {workTypes
+                                  .filter(wt => wt.category_id == null)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                                  ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        </div>
+                        <div className="flex-1 min-w-[120px]">
+                          <label className="block text-xs font-medium text-gray-500">Количество</label>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={row.quantity}
+                            onChange={e => updateSoloRowField(idx, 'quantity', e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          />
+                        </div>
+                        <div className="flex-1 min-w-[150px]">
+                          <label className="block text-xs font-medium text-gray-500">Дата</label>
+                          <input
+                            type="date"
+                            value={row.log_date}
+                            onChange={e => updateSoloRowField(idx, 'log_date', e.target.value)}
+                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                            required
+                          />
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-[200px]">
-                        <label className="block text-xs font-medium text-gray-500">Вид работы</label>
-                        <select
-                          value={row.work_type_id}
-                          onChange={e => updateSoloRowField(idx, 'work_type_id', Number(e.target.value))}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        >
-                          <option value={0} disabled>Выберите...</option>
-                          {workTypes.map(wt => <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>)}
-                        </select>
-                      </div>
-                      <div className="flex-1 min-w-[120px]">
-                        <label className="block text-xs font-medium text-gray-500">Количество</label>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={row.quantity}
-                          onChange={e => updateSoloRowField(idx, 'quantity', e.target.value)}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[150px]">
-                        <label className="block text-xs font-medium text-gray-500">Дата</label>
-                        <input
-                          type="date"
-                          value={row.log_date}
-                          onChange={e => updateSoloRowField(idx, 'log_date', e.target.value)}
-                          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
-                          required
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div className="flex justify-end space-x-2">
-              <button type="button" onClick={cancelEditObject} className="px-4 py-2 bg-gray-200 rounded-md">Отмена</button>
-              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Сохранить</button>
-            </div>
-          </form>
-        </section>
+              <div className="flex justify-end space-x-2">
+                <button type="button" onClick={cancelEditObject} className="px-4 py-2 bg-gray-200 rounded-md">
+                  Отмена
+                </button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                  Сохранить
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Журнал работ – "По объектам" */}
@@ -591,13 +736,20 @@ export default function DashboardPage() {
             <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
               <span className="font-semibold">{obj.name}</span>
               {isManager && (
-                <button onClick={(e) => { e.preventDefault(); startEditObject(obj.id); }} className="text-blue-600 hover:text-blue-800 text-sm ml-2">
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    startEditObject(obj.id);
+                  }}
+                  className="text-blue-600 hover:text-blue-800 text-sm ml-2"
+                >
                   ✎ Редактировать объект
                 </button>
               )}
             </summary>
+
             <div className="px-4 pb-4 space-y-3">
-              {/* Бригадные работы (сгруппированные по бригадам) */}
+              {/* Бригадные работы */}
               {obj.brigades && obj.brigades.size > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-sm font-medium text-gray-700">Бригадные работы</h3>
@@ -667,9 +819,9 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Комментарии (только для реальных объектов) */}
+              {/* Комментарии */}
               {obj.id !== null && (
-                <div className="bg-olive-50 mt-4 border-t p-3">
+                <div className="mt-4 border-t pt-3">
                   <h4 className="text-sm font-semibold mb-2">Комментарии</h4>
                   {(() => {
                     const comments = objectCommentsMap[obj.id] || [];
