@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* Тёмная тема через инверсию (лёгкий вариант) */
+html.dark {
+  filter: invert(0.9) hue-rotate(180deg);
+  background-color: 111;
+}
+
+html.dark img,
+html.dark video,
+html.dark [style*="background-image"] {
+  filter: invert(1) hue-rotate(180deg);
+}
 /* :root {
   --background: #ffffff;
   --foreground: #171717;

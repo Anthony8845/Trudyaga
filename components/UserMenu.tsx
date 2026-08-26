@@ -4,6 +4,7 @@
 import { useAuth } from '@/lib/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ThemeToggle } from './ThemeToggle';
 
 export function UserMenu() {
   const { user, logout } = useAuth();
@@ -23,6 +24,7 @@ export function UserMenu() {
       <span className="text-gray-700 text-sm">
         {user.role === 'brigadier' ? '👷 Бригадир' : user.role === 'supervisor' ? '👑 Руководитель' : '👷 ' + user.login}
       </span>
+      <ThemeToggle/>
       <button
         onClick={handleLogout}
         className="text-red-600 hover:text-red-800 text-sm"

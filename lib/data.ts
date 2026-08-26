@@ -50,6 +50,18 @@ export interface WorkCategory {
   created_at?: string;
 }
 
+export interface SalaryPayment {
+  id: number;
+  worker_id: number;
+  amount: number;
+  payment_date: string;
+  type: 'advance' | 'salary' | 'bonus' | 'other';
+  comment?: string;
+  created_by?: string;
+  created_at?: string;
+}
+
+
 // ---------- Бригады ----------
 export async function getBrigades(): Promise<Brigade[]> {
   const { data, error } = await supabase.from('brigades').select('*');
@@ -429,4 +441,42 @@ export async function getSalaryReport(startDate: string, endDate: string) {
 
   result.sort((a, b) => (a.brigade.name || '').localeCompare(b.brigade.name || ''));
   return result;
+}
+
+// Получить все выплаты за период
+export async function getSalaryPayments(startDate: string, endDate: string): Promise<SalaryPayment[]> {
+  const { data, error } = await supabase
+    .from('salary_payments')
+    .select(`
+      id, worker_id, amount, payment_date, type, comment, created_at,
+      worker:workers!inner(id, full_name)
+    `)
+    .gte('payment_date', startDate)
+    .lte('payment_date', endDate)
+    .order('payment_date', { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// Добавить выплату
+export async function addSalaryPayment(payment: Omit<SalaryPayment, 'id' | 'created_at'>): Promise<SalaryPayment> {
+  const { data, error } = await supabase
+    .from('salary_payments')
+    .insert(payment)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Удалить выплату
+export async function deleteSalaryPayment(id: number): Promise<void> {
+  const { error } = await supabase.from('salary_payments').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// Обновить выплату (не обязательно, но может пригодиться)
+export async function updateSalaryPayment(id: number, updates: Partial<SalaryPayment>): Promise<void> {
+  const { error } = await supabase.from('salary_payments').update(updates).eq('id', id);
+  if (error) throw error;
 }

@@ -8,6 +8,7 @@ export function AdminLinks() {
   if (user?.role !== 'brigadier' && user?.role !== 'supervisor') return null;
   return (
     <>
+      <Link href="/payments" className="text-gray-600 hover:text-gray-900">Выплаты</Link>
       <Link href="/objects" className="text-gray-600 hover:text-gray-900">Объекты</Link>    
       <Link href="/workers" className="text-gray-600 hover:text-gray-900">Сотрудники</Link>
       <Link href="/brigades" className="text-gray-600 hover:text-gray-900">Бригады</Link>
@@ -20,6 +21,8 @@ export function SupervisorLinks() {
   const { user } = useAuth();
   if (user?.role !== 'supervisor') return null;
   return (
-    <Link href="/supervisor" className="text-gray-600 hover:text-gray-900">Подтверждение</Link>
+    <>
+      <Link href="/supervisor" className="text-gray-600 hover:text-gray-900">Подтверждение</Link>
+    </>
   );
 }

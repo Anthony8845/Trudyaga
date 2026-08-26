@@ -41,6 +41,7 @@ export function MobileMenu() {
           <nav className="flex flex-col space-y-4 text-lg font-medium">
             <Link href="/" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Дашборд</Link>
             <Link href="/report" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Зарплата</Link>
+            <Link href="/payments" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Выплаты</Link>
             <hr />
             <AdminLinks />
             <SupervisorLinks />

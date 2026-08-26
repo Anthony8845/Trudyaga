@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { AuthProvider } from '@/lib/AuthContext';
 import { AuthGuard } from '@/components/AuthGuard';
 import { MobileMenu } from '@/components/MobileMenu';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/" className="text-xl font-bold text-blue-600">
                   Трудяга
                 </Link>
+                {/* <ThemeToggle/> */}
                 <MobileMenu />
               </div>
             </header>
