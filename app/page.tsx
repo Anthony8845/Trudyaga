@@ -17,7 +17,7 @@ import {
   Brigade,
   ObjectItem,
   getWorkCategories,
-  WorkCategory,
+  WorkCategory
 } from '@/lib/data';
 import { formatDate, formatMoney } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -38,6 +38,9 @@ export default function DashboardPage() {
   const [objects, setObjects] = useState<ObjectItem[]>([]);
   const [categories, setCategories] = useState<WorkCategory[]>([]);
   const [groupedData, setGroupedData] = useState<any[]>([]);
+  const [brigadeGroupedData, setBrigadeGroupedData] = useState<any[]>([]);
+
+  const [viewMode, setViewMode] = useState<'byObject' | 'byBrigade'>('byObject');
 
   // Форма добавления
   const [targetType, setTargetType] = useState<'worker' | 'brigade'>('worker');
@@ -54,18 +57,18 @@ export default function DashboardPage() {
   const [editBrigadeGroups, setEditBrigadeGroups] = useState<any[]>([]);
   const [editSoloRows, setEditSoloRows] = useState<any[]>([]);
 
-  // Комментарии (по объектам)
+  // Комментарии
   const [objectCommentsMap, setObjectCommentsMap] = useState<Record<number, any[]>>({});
   const [newCommentMap, setNewCommentMap] = useState<Record<number, string>>({});
   const [expandedObjectId, setExpandedObjectId] = useState<number | null>(null);
 
   const loadData = async () => {
     const [w, wt, b, obj, cats] = await Promise.all([
-      getWorkers(),
-      getWorkTypes(),
-      getBrigades(),
-      getObjects(),
-      getWorkCategories(),
+  getWorkers(),
+  getWorkTypes(),
+  getBrigades(),
+  getObjects(),
+  getWorkCategories(),
     ]);
     setWorkers(w);
     setWorkTypes(wt);
@@ -75,6 +78,7 @@ export default function DashboardPage() {
 
     const grouped = await getWorkLogsGroupedByBrigade();
 
+    // ---------- Для режима "По объектам" ----------
     const objectMap = new Map<any, any>();
     const noObject = {
       id: null,
@@ -83,11 +87,38 @@ export default function DashboardPage() {
       soloWorkers: new Map<number, { worker: any; logs: any[] }>(),
     };
 
+    // ---------- Для режима "По бригадам" ----------
+    const brigadeMap = new Map<number, any>();
+    const noBrigadeMap = {
+      brigadeId: null,
+      brigadeName: 'Без бригады',
+      workers: new Map<number, any>(),
+    };
+
     for (const brigade of grouped) {
       for (const worker of brigade.workers) {
         if (!worker.worker) continue;
+
+        // Определяем бригаду сотрудника (может быть null)
+        const brigadeId = worker.worker.brigade_id || null;
+
+        // Для группировки по бригадам
+        const targetBrigade = brigadeId === null
+          ? noBrigadeMap
+          : (brigadeMap.get(brigadeId) || {
+              brigadeId,
+              brigadeName: brigade.brigadeName || 'Бригада без названия',
+              workers: new Map<number, any>(),
+            });
+
+        if (brigadeId !== null && !brigadeMap.has(brigadeId)) {
+          brigadeMap.set(brigadeId, targetBrigade);
+        }
+
         for (const log of worker.logs) {
           const objId = log.object?.id ?? null;
+
+          // --- Группировка по объектам ---
           if (!objectMap.has(objId) && objId !== null) {
             objectMap.set(objId, {
               id: objId,
@@ -99,7 +130,7 @@ export default function DashboardPage() {
           const objGroup = objId === null ? noObject : objectMap.get(objId);
 
           if (log.is_brigade) {
-            // Группируем бригадные записи по object_id, log_date, work_type_id
+            // Бригадная запись в объекте
             const groupKey = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
             if (!objGroup.brigades.has(groupKey)) {
               objGroup.brigades.set(groupKey, {
@@ -117,6 +148,7 @@ export default function DashboardPage() {
             group.logs.push(log);
             group.totalAmount += log.amount;
           } else {
+            // Персональная запись (всегда добавляем в soloWorkers объекта)
             if (!objGroup.soloWorkers.has(worker.worker.id)) {
               objGroup.soloWorkers.set(worker.worker.id, {
                 worker: worker.worker,
@@ -125,17 +157,27 @@ export default function DashboardPage() {
             }
             objGroup.soloWorkers.get(worker.worker.id).logs.push(log);
           }
+
+          // --- Группировка по бригадам ---
+          if (!targetBrigade.workers.has(worker.worker.id)) {
+            targetBrigade.workers.set(worker.worker.id, {
+              worker: worker.worker,
+              logs: [],
+            });
+          }
+          targetBrigade.workers.get(worker.worker.id).logs.push(log);
         }
       }
     }
 
-    const result = Array.from(objectMap.values());
+    // Итоговый массив для "По объектам"
+    const objectResult = Array.from(objectMap.values());
     if (noObject.brigades.size > 0 || noObject.soloWorkers.size > 0) {
-      result.push(noObject);
+      objectResult.push(noObject);
     }
 
-    // Сортировка объектов по максимальной дате работы (от новых к старым)
-    const sortedResult = result.sort((a: any, b: any) => {
+    // Сортировка объектов по последней дате работы (от новых к старым)
+    const sortedObjectResult = objectResult.sort((a: any, b: any) => {
       const getMaxDate = (obj: any) => {
         let maxDate = '';
         if (obj.brigades) {
@@ -157,9 +199,20 @@ export default function DashboardPage() {
       return getMaxDate(b).localeCompare(getMaxDate(a));
     });
 
-    setGroupedData(sortedResult);
-  };
+    setGroupedData(sortedObjectResult);
 
+    // Итоговый массив для "По бригадам"
+    const brigadeResult: any[] = [];
+    for (const [, brigade] of brigadeMap) {
+      brigadeResult.push(brigade);
+    }
+    if (noBrigadeMap.workers.size > 0) {
+      brigadeResult.push(noBrigadeMap);
+    }
+
+    setBrigadeGroupedData(brigadeResult);
+  };
+  
   useEffect(() => {
     loadData();
   }, []);
@@ -298,6 +351,7 @@ export default function DashboardPage() {
     const brigadeLogs = logs.filter((log: any) => log.is_brigade);
     const soloLogs = logs.filter((log: any) => !log.is_brigade);
 
+    // Группировка бригадных записей
     const groupMap = new Map<string, any[]>();
     brigadeLogs.forEach((log: any) => {
       const key = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
@@ -318,6 +372,7 @@ export default function DashboardPage() {
       });
     });
 
+    // Одиночные записи
     const soloRows = soloLogs.map((log: any) => ({
       id: log.id,
       worker_name: log.worker.full_name,
@@ -337,6 +392,29 @@ export default function DashboardPage() {
     setEditBrigadeGroups([]);
     setEditSoloRows([]);
     document.body.style.overflow = 'auto';
+  };
+
+  const startEditSingleLog = (log: any) => {
+    setTargetType(log.worker_id ? 'worker' : 'brigade');
+    setSelectedWorkerId(log.worker_id || 0);
+    setSelectedBrigadeId(0);
+    setSelectedObjectId(log.object_id || 0);
+    setDate(log.log_date);
+
+    // Очищаем групповые данные и кладём запись в soloRows
+    setEditBrigadeGroups([]);
+    setEditSoloRows([
+      {
+        id: log.id,
+        worker_name: log.worker?.full_name || 'Неизвестно',
+        work_type_id: log.work_type_id,
+        quantity: String(log.quantity),
+        log_date: log.log_date,
+      },
+    ]);
+
+    setEditingObjectId(log.object_id ?? null); // открываем модальное окно
+    document.body.style.overflow = 'hidden';
   };
 
   const handleEditObjectSubmit = async (e: React.FormEvent) => {
@@ -505,7 +583,6 @@ export default function DashboardPage() {
                             ))}
                         </optgroup>
                       ))}
-                      {/* Виды без категории */}
                       {workTypes.some(wt => wt.category_id == null) && (
                         <optgroup label="Без категории">
                           {workTypes
@@ -570,6 +647,7 @@ export default function DashboardPage() {
               Редактирование объекта: {objects.find(o => o.id === editingObjectId)?.name || 'Без объекта'}
             </h2>
             <form onSubmit={handleEditObjectSubmit} className="space-y-6">
+              {/* Бригадные работы */}
               {editBrigadeGroups.length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 mb-2">Бригадные работы</h3>
@@ -585,24 +663,9 @@ export default function DashboardPage() {
                             required
                           >
                             <option value={0} disabled>Выберите...</option>
-                            {categories.map(cat => (
-                              <optgroup key={cat.id} label={cat.name}>
-                                {workTypes
-                                  .filter(wt => wt.category_id === cat.id)
-                                  .map(wt => (
-                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
-                                  ))}
-                              </optgroup>
+                            {workTypes.map(wt => (
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
                             ))}
-                            {workTypes.some(wt => wt.category_id == null) && (
-                              <optgroup label="Без категории">
-                                {workTypes
-                                  .filter(wt => wt.category_id == null)
-                                  .map(wt => (
-                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
-                                  ))}
-                              </optgroup>
-                            )}
                           </select>
                         </div>
                         <div className="flex-1 min-w-[120px]">
@@ -633,6 +696,7 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              {/* Работы сотрудников */}
               {editSoloRows.length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 mb-2">Работы сотрудников</h3>
@@ -652,24 +716,9 @@ export default function DashboardPage() {
                             required
                           >
                             <option value={0} disabled>Выберите...</option>
-                            {categories.map(cat => (
-                              <optgroup key={cat.id} label={cat.name}>
-                                {workTypes
-                                  .filter(wt => wt.category_id === cat.id)
-                                  .map(wt => (
-                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
-                                  ))}
-                              </optgroup>
+                            {workTypes.map(wt => (
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
                             ))}
-                            {workTypes.some(wt => wt.category_id == null) && (
-                              <optgroup label="Без категории">
-                                {workTypes
-                                  .filter(wt => wt.category_id == null)
-                                  .map(wt => (
-                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
-                                  ))}
-                              </optgroup>
-                            )}
                           </select>
                         </div>
                         <div className="flex-1 min-w-[120px]">
@@ -713,170 +762,247 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Журнал работ – "По объектам" */}
-      <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Журнал работ</h2>
-        {groupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
-        {groupedData.map(obj => (
-          <details
-            key={obj.id ?? 'no-obj'}
-            className="bg-white rounded-xl shadow"
-            open
-            onToggle={(e) => {
-              if ((e.target as HTMLDetailsElement).open) {
-                if (obj.id !== null) {
-                  setExpandedObjectId(obj.id);
-                  loadComments(obj.id);
-                }
-              } else if (expandedObjectId === obj.id) {
-                setExpandedObjectId(null);
-              }
-            }}
-          >
-            <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
-              <span className="font-semibold">{obj.name}</span>
-              {isManager && (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    startEditObject(obj.id);
-                  }}
-                  className="text-blue-600 hover:text-blue-800 text-sm ml-2"
-                >
-                  ✎ Редактировать объект
-                </button>
-              )}
-            </summary>
+      {/* Переключатель вида журнала */}
+      <div className="flex items-center gap-2">
+        <h2 className="text-xl font-semibold mr-4">Журнал работ</h2>
+        <button
+          onClick={() => setViewMode('byObject')}
+          className={`px-3 py-1 rounded-md text-sm font-medium ${viewMode === 'byObject' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+        >
+          По объектам
+        </button>
+        <button
+          onClick={() => setViewMode('byBrigade')}
+          className={`px-3 py-1 rounded-md text-sm font-medium ${viewMode === 'byBrigade' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+        >
+          По бригадам
+        </button>
+      </div>
 
-            <div className="px-4 pb-4 space-y-3">
-              {/* Бригадные работы */}
-              {obj.brigades && obj.brigades.size > 0 && (
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium text-gray-700">Бригадные работы</h3>
-                  {(() => {
-                    const brigadeGroups = Array.from(obj.brigades.values()) as any[];
-                    const byBrigade = new Map<string, any[]>();
-                    brigadeGroups.forEach(group => {
-                      const name = group.brigadeName || 'Без названия';
-                      if (!byBrigade.has(name)) byBrigade.set(name, []);
-                      byBrigade.get(name)!.push(group);
-                    });
-                    return Array.from(byBrigade.entries()).map(([brigadeName, groups]) => (
-                      <div key={brigadeName} className="ml-2 border-l-2 border-blue-200 pl-2">
-                        <p className="text-sm font-medium">{brigadeName}</p>
-                        <div className="space-y-2">
-                          {groups.map(group => (
-                            <div key={group.key} className="flex items-center justify-between text-sm text-gray-600">
-                              <span>
-                                {group.logs.some((l: any) => l.status === 'pending') && '⏳ '}
-                                {formatDate(group.log_date)} — {group.work_type?.name || '?'}: {group.quantity} {group.work_type?.unit || ''} × {formatMoney(group.rate || 0)} = <span className="font-medium">{formatMoney(group.totalAmount)}</span>
-                              </span>
+      {/* По объектам */}
+      {viewMode === 'byObject' && (
+        <div className="space-y-4">
+          {groupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
+          {groupedData.map(obj => (
+            <details key={obj.id ?? 'no-obj'} className="bg-white rounded-xl shadow">
+              <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
+                <span className="font-semibold">{obj.name}</span>
+                {isManager && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      startEditObject(obj.id);
+                    }}
+                    className="text-blue-600 hover:text-blue-800 text-sm ml-2"
+                  >
+                    ✎ Редактировать объект
+                  </button>
+                )}
+              </summary>
+              <div className="px-4 pb-4 space-y-3">
+                {/* Бригадные работы */}
+                {obj.brigades && obj.brigades.size > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-medium text-gray-700">Бригадные работы</h3>
+                    {(() => {
+                      const brigadeGroups = Array.from(obj.brigades.values()) as any[];
+                      const byBrigade = new Map<string, any[]>();
+                      brigadeGroups.forEach(group => {
+                        const name = group.brigadeName || 'Без названия';
+                        if (!byBrigade.has(name)) byBrigade.set(name, []);
+                        byBrigade.get(name)!.push(group);
+                      });
+                      return Array.from(byBrigade.entries()).map(([brigadeName, groups]) => (
+                        <div key={brigadeName} className="ml-2 border-l-2 border-blue-200 pl-2">
+                          <p className="text-sm font-medium">{brigadeName}</p>
+                          <div className="space-y-2">
+                            {groups.map(group => (
+                              <div key={group.key} className="flex items-center justify-between text-sm text-gray-600">
+                                <span>
+                                  {group.logs.some((l: any) => l.status === 'pending') && '⏳ '}
+                                  {formatDate(group.log_date)} — {group.work_type?.name || '?'}: {group.quantity} {group.work_type?.unit || ''} × {formatMoney(group.rate || 0)} = <span className="font-medium">{formatMoney(group.totalAmount)}</span>
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    if (confirm('Удалить весь бригадный наряд?')) {
+                                      Promise.all(group.logs.map((l: any) => deleteWorkLog(l.id))).then(() => loadData());
+                                    }
+                                  }}
+                                  className="text-red-600 hover:text-red-800 text-xs ml-2"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+
+                {/* Одиночные сотрудники */}
+                {obj.soloWorkers && obj.soloWorkers.size > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-medium text-gray-700">Работы сотрудников</h3>
+                    {Array.from(obj.soloWorkers.values()).map((workerEntry: any) => (
+                      <div key={`solo-worker-${workerEntry.worker.id}`} className="ml-2 text-sm text-gray-600">
+                        <p className="font-medium">{workerEntry.worker.full_name}</p>
+                        <ul className="space-y-1">
+                          {workerEntry.logs.map((log: any) => {
+                            const workTypeName = log.work_type?.name || '?';
+                            const unit = log.work_type?.unit || '';
+                            const rate = log.work_type?.rate || 0;
+                            const isPending = log.status === 'pending';
+                            return (
+                              <li key={`solo-log-${log.id}`} className={`flex items-center justify-between ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
+                                <span>
+                                  {isPending && '⏳ '}
+                                  {formatDate(log.log_date)} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(log.amount)}</span>
+                                </span>
+                                <button onClick={() => handleDelete(log.id)} className="text-red-600 hover:text-red-800 text-xs ml-2">✕</button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Комментарии */}
+                {obj.id !== null && (
+                  <div className="mt-4 border-t pt-3">
+                    <h4 className="text-sm font-semibold mb-2">Комментарии</h4>
+                    {(() => {
+                      const comments = objectCommentsMap[obj.id] || [];
+                      const commentInput = newCommentMap[obj.id] || '';
+                      return (
+                        <>
+                          {comments.length === 0 ? (
+                            <p className="text-sm text-gray-500">Нет комментариев</p>
+                          ) : (
+                            <ul className="space-y-2">
+                              {comments.map(c => (
+                                <li key={c.id} className="text-sm text-gray-600">
+                                  <div className="flex justify-between items-start">
+                                    <span className="font-medium">{c.author_name || 'Сотрудник'}</span>
+                                    <span className="text-gray-400 text-xs">{new Date(c.created_at).toLocaleString('ru-RU')}</span>
+                                  </div>
+                                  <p>{c.comment}</p>
+                                  {(user?.role === 'supervisor' || c.user_id === user?.id) && (
+                                    <button
+                                      onClick={() => handleDeleteComment(c.id, obj.id)}
+                                      className="text-red-500 hover:text-red-700 text-xs"
+                                    >
+                                      Удалить
+                                    </button>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {isManager && (
+                            <div className="mt-3 flex gap-2">
+                              <input
+                                type="text"
+                                value={commentInput}
+                                onChange={e => setNewCommentMap(prev => ({ ...prev, [obj.id]: e.target.value }))}
+                                placeholder="Добавить комментарий..."
+                                className="flex-1 rounded-md border-gray-300 shadow-sm text-sm"
+                              />
                               <button
-                                onClick={() => {
-                                  if (confirm('Удалить весь бригадный наряд?')) {
-                                    Promise.all(group.logs.map((l: any) => deleteWorkLog(l.id))).then(() => loadData());
-                                  }
-                                }}
-                                className="text-red-600 hover:text-red-800 text-xs ml-2"
+                                onClick={() => handleAddComment(obj.id)}
+                                className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                              >
+                                Отправить
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+
+      {/* По бригадам */}
+      {viewMode === 'byBrigade' && (
+        <div className="space-y-4">
+          {brigadeGroupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
+          {brigadeGroupedData.map(brigade => (
+            <details
+              key={brigade.brigadeId ?? 'no-brigade'}
+              className="bg-white rounded-xl shadow"
+            >
+              <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
+                <span className="font-semibold">
+                  {brigade.brigadeId === null ? 'Без бригады' : brigade.brigadeName}
+                </span>
+                <span className="text-sm text-gray-500">
+                  {Array.from(brigade.workers.values()).reduce(
+                    (sum: number, worker: any) => sum + worker.logs.length,
+                    0
+                  )} записей
+                </span>
+              </summary>
+              <div className="px-4 pb-4 space-y-4">
+                {Array.from(brigade.workers.values()).map((workerEntry: any) => (
+                  <div key={workerEntry.worker.id} className="ml-2 text-sm text-gray-600">
+                    <p className="font-medium mb-1">{workerEntry.worker.full_name}</p>
+                    <ul className="space-y-1">
+                      {workerEntry.logs.map((log: any) => {
+                        const workTypeName = log.work_type?.name || '?';
+                        const unit = log.work_type?.unit || '';
+                        const rate = log.work_type?.rate || 0;
+                        const objectName = log.object?.name || 'Без объекта';
+                        const isPending = log.status === 'pending';
+                        return (
+                          <li
+                            key={`brigade-log-${log.id}`}
+                            className={`flex items-center justify-between ${
+                              isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''
+                            }`}
+                          >
+                            <span>
+                              {isPending && '⏳ '}
+                              {formatDate(log.log_date)} — {objectName} — {workTypeName}:{' '}
+                              {log.quantity} {unit} × {formatMoney(rate)} ={' '}
+                              <span className="font-medium">{formatMoney(log.amount)}</span>
+                            </span>
+                            <span className="flex gap-1 ml-2">
+                              {isManager && (
+                                <button
+                                  onClick={() => startEditSingleLog(log)}
+                                  className="text-blue-600 hover:text-blue-800 text-xs"
+                                  title="Редактировать"
+                                >
+                                  ✎
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDelete(log.id)}
+                                className="text-red-600 hover:text-red-800 text-xs"
+                                title="Удалить"
                               >
                                 ✕
                               </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              )}
-
-              {/* Одиночные сотрудники */}
-              {obj.soloWorkers && obj.soloWorkers.size > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-gray-700">Работы сотрудников</h3>
-                  {Array.from(obj.soloWorkers.values()).map((workerEntry: any) => (
-                    <div key={`solo-worker-${workerEntry.worker.id}`} className="ml-2 text-sm text-gray-600">
-                      <p className="font-medium">{workerEntry.worker.full_name}</p>
-                      <ul className="space-y-1">
-                        {workerEntry.logs.map((log: any) => {
-                          const workTypeName = log.work_type?.name || '?';
-                          const unit = log.work_type?.unit || '';
-                          const rate = log.work_type?.rate || 0;
-                          const isPending = log.status === 'pending';
-                          return (
-                            <li key={`solo-log-${log.id}`} className={`flex items-center justify-between ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
-                              <span>
-                                {isPending && '⏳ '}
-                                {formatDate(log.log_date)} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(log.amount)}</span>
-                              </span>
-                              <button onClick={() => handleDelete(log.id)} className="text-red-600 hover:text-red-800 text-xs ml-2">✕</button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Комментарии */}
-              {obj.id !== null && (
-                <div className="mt-4 border-t pt-3">
-                  <h4 className="text-sm font-semibold mb-2">Комментарии</h4>
-                  {(() => {
-                    const comments = objectCommentsMap[obj.id] || [];
-                    const commentInput = newCommentMap[obj.id] || '';
-                    return (
-                      <>
-                        {comments.length === 0 ? (
-                          <p className="text-sm text-gray-500">Нет комментариев</p>
-                        ) : (
-                          <ul className="space-y-2">
-                            {comments.map(c => (
-                              <li key={c.id} className="text-sm text-gray-600">
-                                <div className="flex justify-between items-start">
-                                  <span className="font-medium">{c.author_name || 'Сотрудник'}</span>
-                                  <span className="text-gray-400 text-xs">{new Date(c.created_at).toLocaleString('ru-RU')}</span>
-                                </div>
-                                <p>{c.comment}</p>
-                                {(user?.role === 'supervisor' || c.user_id === user?.id) && (
-                                  <button
-                                    onClick={() => handleDeleteComment(c.id, obj.id)}
-                                    className="text-red-500 hover:text-red-700 text-xs"
-                                  >
-                                    Удалить
-                                  </button>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {isManager && (
-                          <div className="mt-3 flex gap-2">
-                            <input
-                              type="text"
-                              value={commentInput}
-                              onChange={e => setNewCommentMap(prev => ({ ...prev, [obj.id]: e.target.value }))}
-                              placeholder="Добавить комментарий..."
-                              className="flex-1 rounded-md border-gray-300 shadow-sm text-sm"
-                            />
-                            <button
-                              onClick={() => handleAddComment(obj.id)}
-                              className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
-                            >
-                              Отправить
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          </details>
-        ))}
-      </div>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

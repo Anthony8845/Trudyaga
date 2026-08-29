@@ -27,13 +27,13 @@ function WorkTypesContent() {
   const [categories, setCategories] = useState<WorkCategory[]>([]);
   const [workTypes, setWorkTypes] = useState<WorkType[]>([]);
 
-  // Категории: добавление / редактирование
+  // Категории
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [categoryFormMode, setCategoryFormMode] = useState<'add' | 'edit'>('add');
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [categoryName, setCategoryName] = useState('');
 
-  // Виды работ: добавление / редактирование (модальное окно)
+  // Виды работ
   const [showWorkTypeForm, setShowWorkTypeForm] = useState(false);
   const [workTypeFormMode, setWorkTypeFormMode] = useState<'add' | 'edit'>('add');
   const [editingWorkTypeId, setEditingWorkTypeId] = useState<number | null>(null);
@@ -44,8 +44,9 @@ function WorkTypesContent() {
     category_id: '',
   });
 
-  // Drag and drop
   const [draggedWorkTypeId, setDraggedWorkTypeId] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<number | null>(null);
 
   const loadData = async () => {
     const [cats, wts] = await Promise.all([getWorkCategories(), getWorkTypes()]);
@@ -165,15 +166,57 @@ function WorkTypesContent() {
     setDraggedWorkTypeId(workTypeId);
   };
 
-  const handleDrop = async (e: React.DragEvent, categoryId: number | null) => {
+  const handleDropCategory = async (e: React.DragEvent, categoryId: number | null) => {
     e.preventDefault();
     const wtId = Number(e.dataTransfer.getData('text/plain'));
     if (!wtId) return;
     const wt = workTypes.find(w => w.id === wtId);
     if (!wt) return;
 
-    await updateWorkType({ ...wt, category_id: categoryId });
+    // Если категория изменилась, обновляем category_id
+    if (wt.category_id !== categoryId) {
+      await updateWorkType({ ...wt, category_id: categoryId });
+    }
     loadData();
+    setDraggedWorkTypeId(null);
+    setDragOverIndex(null);
+    setDragOverCategoryId(null);
+  };
+
+  const handleDropReorder = async (
+    e: React.DragEvent,
+    categoryId: number | null,
+    targetIndex: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const draggedId = Number(e.dataTransfer.getData('text/plain'));
+    if (!draggedId) return;
+
+    const currentList = workTypes
+      .filter(wt => wt.category_id === categoryId)
+      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+    const draggedItem = currentList.find(wt => wt.id === draggedId);
+    if (!draggedItem) return;
+
+    const newList = currentList.filter(wt => wt.id !== draggedId);
+    // Вставляем на место targetIndex
+    newList.splice(targetIndex, 0, draggedItem);
+
+    const updates = newList.map((wt, index) => ({
+      id: wt.id,
+      sort_order: index,
+    }));
+
+    await Promise.all(
+      updates.map(u => updateWorkType({ ...workTypes.find(w => w.id === u.id)!, sort_order: u.sort_order }))
+    );
+    loadData();
+    setDraggedWorkTypeId(null);
+    setDragOverIndex(null);
+    setDragOverCategoryId(null);
   };
 
   return (
@@ -188,7 +231,6 @@ function WorkTypesContent() {
         </button>
       </div>
 
-      {/* Форма добавления/редактирования категории (инлайн) */}
       {showCategoryForm && (
         <div className="bg-white rounded-xl shadow p-4 space-y-3">
           <input
@@ -208,16 +250,17 @@ function WorkTypesContent() {
         </div>
       )}
 
-      {/* Сетка категорий */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {categories.map(cat => {
-          const catWorkTypes = workTypes.filter(wt => wt.category_id === cat.id);
+          const catWorkTypes = workTypes
+            .filter(wt => wt.category_id === cat.id)
+            .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
           return (
             <div
               key={cat.id}
               className="bg-white rounded-xl shadow p-4"
               onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => handleDrop(e, cat.id)}
+              onDrop={(e) => handleDropCategory(e, cat.id)}
             >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold">{cat.name}</h3>
@@ -243,21 +286,33 @@ function WorkTypesContent() {
                 {catWorkTypes.length === 0 && (
                   <li className="text-sm text-gray-400 italic">Нет видов работ</li>
                 )}
-                {catWorkTypes.map(wt => (
+                {catWorkTypes.map((wt, idx) => (
                   <li
-                    key={wt.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, wt.id)}
-                    onClick={() => openEditWorkType(wt)}
-                    className="p-2 bg-gray-50 rounded flex justify-between items-center cursor-grab hover:bg-gray-100"
-                    title="Нажмите для редактирования"
-                  >
+                      key={wt.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, wt.id)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragOverIndex(idx);
+                        setDragOverCategoryId(cat.id);
+                      }}
+                      onDrop={(e) => handleDropReorder(e, cat.id, idx)}
+                      onClick={() => openEditWorkType(wt)}
+                      className={`p-2 bg-gray-50 rounded flex justify-between items-center cursor-grab hover:bg-gray-100 ${
+                        draggedWorkTypeId === wt.id ? 'opacity-50' : ''
+                      } ${
+                        dragOverIndex === idx && dragOverCategoryId === cat.id
+                          ? 'border-t-2 border-blue-500'
+                          : ''
+                      }`}
+                      title="Нажмите для редактирования, перетащите для изменения порядка"
+                    >
                     <span className="text-sm">{wt.name} ({wt.unit})</span>
                     <span className="flex items-center gap-2">
                       <span className="text-sm font-medium">{wt.rate} ₽</span>
                       <button
                         onClick={(e) => {
-                          e.stopPropagation(); // чтобы не открывалось редактирование
+                          e.stopPropagation();
                           handleDeleteWorkType(wt.id);
                         }}
                         className="text-red-500 hover:text-red-700 text-xs"
@@ -280,33 +335,60 @@ function WorkTypesContent() {
           );
         })}
 
-        {/* Категория "Без категории" */}
+        {/* Без категории */}
         <div
           className="bg-white rounded-xl shadow p-4"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => handleDrop(e, null)}
+          onDrop={(e) => handleDropCategory(e, null)}
         >
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-gray-500">Без категории</h3>
           </div>
 
           <ul className="space-y-2 mb-3">
-            {workTypes.filter(wt => wt.category_id == null).length === 0 && (
-              <li className="text-sm text-gray-400 italic">Нет видов работ</li>
-            )}
             {workTypes
               .filter(wt => wt.category_id == null)
-              .map(wt => (
+              .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+              .length === 0 && (
+                <li className="text-sm text-gray-400 italic">Нет видов работ</li>
+              )}
+            {workTypes
+              .filter(wt => wt.category_id == null)
+              .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+              .map((wt, idx) => (
                 <li
                   key={wt.id}
                   draggable
                   onDragStart={(e) => handleDragStart(e, wt.id)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOverIndex(idx);
+                    setDragOverCategoryId(null); // null для без категории
+                  }}
+                  onDrop={(e) => handleDropReorder(e, null, idx)}
                   onClick={() => openEditWorkType(wt)}
-                  className="p-2 bg-gray-50 rounded flex justify-between items-center cursor-grab hover:bg-gray-100"
-                  title="Нажмите для редактирования"
+                  className={`p-2 bg-gray-50 rounded flex justify-between items-center cursor-grab hover:bg-gray-100 ${
+                    draggedWorkTypeId === wt.id ? 'opacity-50' : ''
+                  } ${
+                    dragOverIndex === idx && dragOverCategoryId === null
+                      ? 'border-t-2 border-blue-500'
+                      : ''
+                  }`}
                 >
                   <span className="text-sm">{wt.name} ({wt.unit})</span>
-                  <span className="text-sm font-medium">{wt.rate} ₽</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{wt.rate} ₽</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteWorkType(wt.id);
+                      }}
+                      className="text-red-500 hover:text-red-700 text-xs"
+                      title="Удалить вид работы"
+                    >
+                      ✕
+                    </button>
+                  </span>
                 </li>
               ))}
           </ul>
@@ -320,7 +402,7 @@ function WorkTypesContent() {
         </div>
       </div>
 
-      {/* Модальное окно для добавления/редактирования вида работы */}
+      {/* Модальное окно вида работы */}
       {showWorkTypeForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">

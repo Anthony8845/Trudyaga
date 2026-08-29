@@ -14,6 +14,7 @@ export interface WorkType {
   unit: string;
   rate: number;
   category_id?: number | null;
+  sort_order?: number;
 }
 
 export interface WorkLog {
@@ -138,6 +139,13 @@ export async function deleteWorkType(id: number): Promise<void> {
   if (error) throw error;
 }
 
+export async function updateWorkTypesOrder(items: { id: number; sort_order: number }[]): Promise<void> {
+  const { error } = await supabase
+    .from('work_types')
+    .upsert(items, { onConflict: 'id' });
+  if (error) throw error;
+}
+
 // ---------- Категории видов работ ----------
 export async function getWorkCategories(): Promise<WorkCategory[]> {
   const { data, error } = await supabase.from('work_categories').select('*').order('name');
@@ -209,31 +217,18 @@ export async function getWorkLogsGroupedByBrigade() {
   if (error) throw error;
 
   const brigadeSet = new Set<number>();
-  const logsTyped = data as any[];
-  logsTyped.forEach(log => {
-    if (log.worker?.brigade_id) brigadeSet.add(log.worker.brigade_id);
-  });
-
-  const brigadeMap = new Map<number, string>();
-  if (brigadeSet.size > 0) {
-    const { data: brigades } = await supabase
-      .from('brigades')
-      .select('id, name')
-      .in('id', Array.from(brigadeSet));
-    if (brigades) {
-      brigades.forEach((b: any) => brigadeMap.set(b.id, b.name));
-    }
-  }
+  const noBrigadeLogs: any[] = [];
 
   const grouped = new Map<number, any>();
-  const noBrigade: any[] = [];
 
-  logsTyped.forEach(log => {
+  for (const log of (data as any[])) {
     const brigadeId = log.worker?.brigade_id || null;
+
     if (brigadeId === null) {
-      noBrigade.push(log);
-      return;
+      noBrigadeLogs.push(log);
+      continue;
     }
+
     if (!grouped.has(brigadeId)) {
       grouped.set(brigadeId, new Map<number, any>());
     }
@@ -245,26 +240,54 @@ export async function getWorkLogsGroupedByBrigade() {
       });
     }
     workersMap.get(log.worker.id).logs.push(log);
-  });
+  }
 
   const result: any[] = [];
   for (const [brigadeId, workersMap] of grouped) {
     result.push({
       brigadeId,
-      brigadeName: brigadeMap.get(brigadeId) || 'Бригада без названия',
+      brigadeName: '', // заполним позже
       workers: Array.from(workersMap.values()),
     });
   }
-  if (noBrigade.length > 0) {
+
+  if (noBrigadeLogs.length > 0) {
+    // Группируем без бригады по сотрудникам
+    const soloWorkersMap = new Map<number, any>();
+    noBrigadeLogs.forEach(log => {
+      if (!soloWorkersMap.has(log.worker.id)) {
+        soloWorkersMap.set(log.worker.id, {
+          worker: log.worker,
+          logs: [],
+        });
+      }
+      soloWorkersMap.get(log.worker.id).logs.push(log);
+    });
     result.push({
       brigadeId: null,
       brigadeName: 'Без бригады',
-      workers: [{
-        worker: null,
-        logs: noBrigade,
-      }],
+      workers: Array.from(soloWorkersMap.values()),
     });
   }
+
+  // Получаем названия бригад
+  const brigadeIds = Array.from(grouped.keys()) as number[];
+  if (brigadeIds.length > 0) {
+    const { data: brigadesData } = await supabase
+      .from('brigades')
+      .select('id, name')
+      .in('id', brigadeIds);
+    if (brigadesData) {
+      const brigadeNameMap = new Map<number, string>();
+      brigadesData.forEach((b: any) => brigadeNameMap.set(b.id, b.name));
+      result.forEach(brigade => {
+        if (brigade.brigadeId !== null) {
+          brigade.brigadeName = brigadeNameMap.get(brigade.brigadeId) || 'Бригада без названия';
+        }
+      });
+    }
+  }
+
   return result;
 }
 
@@ -283,6 +306,7 @@ export async function addWorkLog(log: Omit<WorkLog, 'id' | 'amount'> & { status?
     .select()
     .single();
   if (error) throw error;
+  console.log('Inserting work log:', { ...log, amount, status: log.status || 'pending' });
   return data;
 }
 
@@ -480,3 +504,4 @@ export async function updateSalaryPayment(id: number, updates: Partial<SalaryPay
   const { error } = await supabase.from('salary_payments').update(updates).eq('id', id);
   if (error) throw error;
 }
+
