@@ -183,7 +183,7 @@ function WorkTypesContent() {
     setDragOverCategoryId(null);
   };
 
-  const handleDropReorder = async (
+const handleDropReorder = async (
     e: React.DragEvent,
     categoryId: number | null,
     targetIndex: number
@@ -194,15 +194,25 @@ function WorkTypesContent() {
     const draggedId = Number(e.dataTransfer.getData('text/plain'));
     if (!draggedId) return;
 
+    const draggedItem = workTypes.find(wt => wt.id === draggedId);
+    if (!draggedItem) return;
+
+    // Если категория изменилась, просто обновляем category_id
+    if (draggedItem.category_id !== categoryId) {
+      await updateWorkType({ ...draggedItem, category_id: categoryId });
+      loadData();
+      setDraggedWorkTypeId(null);
+      setDragOverIndex(null);
+      setDragOverCategoryId(null);
+      return;
+    }
+
+    // Иначе — перестановка внутри категории
     const currentList = workTypes
       .filter(wt => wt.category_id === categoryId)
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
-    const draggedItem = currentList.find(wt => wt.id === draggedId);
-    if (!draggedItem) return;
-
     const newList = currentList.filter(wt => wt.id !== draggedId);
-    // Вставляем на место targetIndex
     newList.splice(targetIndex, 0, draggedItem);
 
     const updates = newList.map((wt, index) => ({
