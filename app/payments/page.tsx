@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/AuthContext';
 import {
   getWorkers,
   getSalaryPayments,
+  getSalaryPaymentsByPeriod,
   addSalaryPayment,
   updateSalaryPayment,
   deleteSalaryPayment,
@@ -29,37 +30,43 @@ function PaymentsContent() {
 
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [payments, setPayments] = useState<SalaryPayment[]>([]);
-  const [startDate, setStartDate] = useState(() => {
+  const [viewMode, setViewMode] = useState<'byPaymentDate' | 'byPeriod'>('byPeriod');
+  const [selectedPeriod, setSelectedPeriod] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
   });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [workerPayments, setWorkerPayments] = useState<SalaryPayment[]>([]);
-  const [editingPayment, setEditingPayment] = useState<SalaryPayment | null>(null);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [editingPayment, setEditingPayment] = useState<SalaryPayment | null>(null);
   const [paymentForm, setPaymentForm] = useState({
     worker_id: '',
     amount: '',
     payment_date: '',
     type: 'advance',
     comment: '',
+    period: '',
   });
 
-  // Сводка по начислениям
   const [salarySummary, setSalarySummary] = useState<Record<number, number>>({});
 
   const loadData = async () => {
+    const start = selectedPeriod; // "YYYY-MM-01"
+    const end = new Date(new Date(start).getFullYear(), new Date(start).getMonth() + 1, 0)
+      .toISOString()
+      .split('T')[0]; // последний день выбранного месяца
+
     const [w, p, report] = await Promise.all([
       getWorkers(),
-      getSalaryPayments(startDate, endDate),
-      getSalaryReport(startDate, endDate),
+      viewMode === 'byPeriod'
+        ? getSalaryPaymentsByPeriod(selectedPeriod)
+        : getSalaryPayments(start, end),
+      getSalaryReport(start, end),
     ]);
     setWorkers(w);
     setPayments(p);
 
-    // Считаем начисления по сотрудникам из отчёта
     const summary: Record<number, number> = {};
     report.forEach((brigade: any) => {
       brigade.workers.forEach((workerEntry: any) => {
@@ -71,12 +78,12 @@ function PaymentsContent() {
 
   useEffect(() => {
     loadData();
-  }, [startDate, endDate]);
+  }, [selectedPeriod, viewMode]);
 
   const openWorkerPayments = async (worker: Worker) => {
     setSelectedWorker(worker);
-    const workerPayments = payments.filter(p => p.worker_id === worker.id);
-    setWorkerPayments(workerPayments);
+    const filtered = payments.filter(p => p.worker_id === worker.id);
+    setWorkerPayments(filtered);
   };
 
   const handleAddPayment = () => {
@@ -88,6 +95,7 @@ function PaymentsContent() {
       payment_date: new Date().toISOString().split('T')[0],
       type: 'advance',
       comment: '',
+      period: selectedPeriod,
     });
     setShowPaymentForm(true);
   };
@@ -100,13 +108,14 @@ function PaymentsContent() {
       payment_date: payment.payment_date,
       type: payment.type,
       comment: payment.comment || '',
+      period: payment.period || selectedPeriod,
     });
     setShowPaymentForm(true);
   };
 
   const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!paymentForm.amount || !paymentForm.payment_date) return;
+    if (!paymentForm.amount || !paymentForm.payment_date || !paymentForm.period) return;
 
     const amount = parseFloat(paymentForm.amount);
     if (isNaN(amount) || amount <= 0) return;
@@ -117,6 +126,7 @@ function PaymentsContent() {
       payment_date: paymentForm.payment_date,
       type: paymentForm.type as SalaryPayment['type'],
       comment: paymentForm.comment.trim() || undefined,
+      period: paymentForm.period, // "YYYY-MM-01"
     };
 
     if (editingPayment) {
@@ -138,7 +148,6 @@ function PaymentsContent() {
     }
   };
 
-  // Вычисляем сводку по каждому сотруднику
   const getWorkerPaymentTotal = (workerId: number) => {
     return payments
       .filter(p => p.worker_id === workerId)
@@ -157,17 +166,17 @@ function PaymentsContent() {
         <h1 className="text-2xl font-semibold">Выплаты</h1>
         <div className="flex gap-2">
           <input
-            type="date"
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
+            type="month"
+            value={selectedPeriod.substring(0, 7)}
+            onChange={e => setSelectedPeriod(e.target.value + '-01')}
             className="rounded-md border-gray-300 text-sm"
           />
-          <input
-            type="date"
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="rounded-md border-gray-300 text-sm"
-          />
+          <button
+            onClick={() => setViewMode(prev => prev === 'byPeriod' ? 'byPaymentDate' : 'byPeriod')}
+            className="px-3 py-1 rounded-md text-sm font-medium bg-gray-200 text-gray-700"
+          >
+            {viewMode === 'byPeriod' ? 'По периоду начисления' : 'По дате платежа'}
+          </button>
         </div>
       </div>
 
@@ -178,7 +187,6 @@ function PaymentsContent() {
           const paid = getWorkerPaymentTotal(worker.id);
           const balance = accrued - paid;
           const isOverpaid = balance < 0;
-          const hasDebtFromPreviousMonth = balance > 0 && new Date(endDate).getDate() > 25; // примерное условие
 
           return (
             <div
@@ -195,7 +203,7 @@ function PaymentsContent() {
               <div className="space-y-1 text-sm text-gray-600">
                 <div>Начислено: <span className="font-medium">{formatMoney(accrued)}</span></div>
                 <div>Выплачено: <span className="font-medium">{formatMoney(paid)}</span></div>
-                <div className={`font-medium ${isOverpaid ? 'text-red-600' : hasDebtFromPreviousMonth ? 'text-red-500' : 'text-green-600'}`}>
+                <div className={`font-medium ${isOverpaid ? 'text-red-600' : 'text-green-600'}`}>
                   Остаток: {formatMoney(balance)}
                 </div>
               </div>
@@ -215,13 +223,16 @@ function PaymentsContent() {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {workerPayments.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">Нет выплат за выбранный период</p>
+                <p className="text-gray-500 text-center py-8">Нет выплат</p>
               ) : (
                 workerPayments.map(p => (
                   <div key={p.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                     <div>
                       <div className="font-medium">{formatDate(p.payment_date)}</div>
-                      <div className="text-xs text-gray-500">{p.type} {p.comment ? `— ${p.comment}` : ''}</div>
+                      <div className="text-xs text-gray-500">
+                        {p.type}{p.comment ? ` — ${p.comment}` : ''}
+                        {p.period ? ` (за ${formatDate(p.period)})` : ''}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{formatMoney(p.amount)}</span>
@@ -282,11 +293,21 @@ function PaymentsContent() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Дата</label>
+                <label className="block text-sm font-medium text-gray-700">Дата платежа</label>
                 <input
                   type="date"
                   value={paymentForm.payment_date}
                   onChange={e => setPaymentForm({ ...paymentForm, payment_date: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Период начисления</label>
+                <input
+                  type="month"
+                  value={paymentForm.period ? paymentForm.period.substring(0, 7) : selectedPeriod.substring(0, 7)}
+                  onChange={e => setPaymentForm({ ...paymentForm, period: e.target.value + '-01' })}
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm"
                   required
                 />

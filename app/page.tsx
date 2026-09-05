@@ -12,12 +12,12 @@ import {
   getWorkLogsGroupedByBrigade,
   updateWorkLog,
   deleteWorkLog,
+  getWorkCategories,
   Worker,
   WorkType,
   Brigade,
   ObjectItem,
-  getWorkCategories,
-  WorkCategory
+  WorkCategory,
 } from '@/lib/data';
 import { formatDate, formatMoney } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
@@ -42,7 +42,6 @@ export default function DashboardPage() {
 
   const [viewMode, setViewMode] = useState<'byObject' | 'byBrigade'>('byObject');
 
-  // Форма добавления
   const [targetType, setTargetType] = useState<'worker' | 'brigade'>('worker');
   const [selectedWorkerId, setSelectedWorkerId] = useState<number>(0);
   const [selectedBrigadeId, setSelectedBrigadeId] = useState<number>(0);
@@ -52,23 +51,21 @@ export default function DashboardPage() {
     { id: Date.now(), work_type_id: 0, quantity: '' },
   ]);
 
-  // Редактирование объекта
   const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
   const [editBrigadeGroups, setEditBrigadeGroups] = useState<any[]>([]);
   const [editSoloRows, setEditSoloRows] = useState<any[]>([]);
 
-  // Комментарии
   const [objectCommentsMap, setObjectCommentsMap] = useState<Record<number, any[]>>({});
   const [newCommentMap, setNewCommentMap] = useState<Record<number, string>>({});
   const [expandedObjectId, setExpandedObjectId] = useState<number | null>(null);
 
   const loadData = async () => {
     const [w, wt, b, obj, cats] = await Promise.all([
-  getWorkers(),
-  getWorkTypes(),
-  getBrigades(),
-  getObjects(),
-  getWorkCategories(),
+      getWorkers(),
+      getWorkTypes(),
+      getBrigades(),
+      getObjects(),
+      getWorkCategories(),
     ]);
     setWorkers(w);
     setWorkTypes(wt);
@@ -78,51 +75,26 @@ export default function DashboardPage() {
 
     const grouped = await getWorkLogsGroupedByBrigade();
 
-    // ---------- Для режима "По объектам" ----------
+    // ---------- По объектам ----------
     const objectMap = new Map<any, any>();
     const noObject = {
       id: null,
       name: 'Без объекта',
+      address: '',
       brigades: new Map<string, any>(),
       soloWorkers: new Map<number, { worker: any; logs: any[] }>(),
-    };
-
-    // ---------- Для режима "По бригадам" ----------
-    const brigadeMap = new Map<number, any>();
-    const noBrigadeMap = {
-      brigadeId: null,
-      brigadeName: 'Без бригады',
-      workers: new Map<number, any>(),
     };
 
     for (const brigade of grouped) {
       for (const worker of brigade.workers) {
         if (!worker.worker) continue;
-
-        // Определяем бригаду сотрудника (может быть null)
-        const brigadeId = worker.worker.brigade_id || null;
-
-        // Для группировки по бригадам
-        const targetBrigade = brigadeId === null
-          ? noBrigadeMap
-          : (brigadeMap.get(brigadeId) || {
-              brigadeId,
-              brigadeName: brigade.brigadeName || 'Бригада без названия',
-              workers: new Map<number, any>(),
-            });
-
-        if (brigadeId !== null && !brigadeMap.has(brigadeId)) {
-          brigadeMap.set(brigadeId, targetBrigade);
-        }
-
         for (const log of worker.logs) {
           const objId = log.object?.id ?? null;
-
-          // --- Группировка по объектам ---
           if (!objectMap.has(objId) && objId !== null) {
             objectMap.set(objId, {
               id: objId,
               name: log.object?.name || '',
+              address: log.object?.address || '',
               brigades: new Map<string, any>(),
               soloWorkers: new Map<number, any>(),
             });
@@ -130,7 +102,6 @@ export default function DashboardPage() {
           const objGroup = objId === null ? noObject : objectMap.get(objId);
 
           if (log.is_brigade) {
-            // Бригадная запись в объекте
             const groupKey = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
             if (!objGroup.brigades.has(groupKey)) {
               objGroup.brigades.set(groupKey, {
@@ -148,7 +119,6 @@ export default function DashboardPage() {
             group.logs.push(log);
             group.totalAmount += log.amount;
           } else {
-            // Персональная запись (всегда добавляем в soloWorkers объекта)
             if (!objGroup.soloWorkers.has(worker.worker.id)) {
               objGroup.soloWorkers.set(worker.worker.id, {
                 worker: worker.worker,
@@ -157,26 +127,15 @@ export default function DashboardPage() {
             }
             objGroup.soloWorkers.get(worker.worker.id).logs.push(log);
           }
-
-          // --- Группировка по бригадам ---
-          if (!targetBrigade.workers.has(worker.worker.id)) {
-            targetBrigade.workers.set(worker.worker.id, {
-              worker: worker.worker,
-              logs: [],
-            });
-          }
-          targetBrigade.workers.get(worker.worker.id).logs.push(log);
         }
       }
     }
 
-    // Итоговый массив для "По объектам"
     const objectResult = Array.from(objectMap.values());
     if (noObject.brigades.size > 0 || noObject.soloWorkers.size > 0) {
       objectResult.push(noObject);
     }
 
-    // Сортировка объектов по последней дате работы (от новых к старым)
     const sortedObjectResult = objectResult.sort((a: any, b: any) => {
       const getMaxDate = (obj: any) => {
         let maxDate = '';
@@ -198,10 +157,40 @@ export default function DashboardPage() {
       };
       return getMaxDate(b).localeCompare(getMaxDate(a));
     });
-
     setGroupedData(sortedObjectResult);
 
-    // Итоговый массив для "По бригадам"
+    // ---------- По бригадам ----------
+    const brigadeMap = new Map<number, any>();
+    const noBrigadeMap = {
+      brigadeId: null,
+      brigadeName: 'Без бригады',
+      workers: new Map<number, any>(),
+    };
+
+    for (const brigade of grouped) {
+      for (const worker of brigade.workers) {
+        if (!worker.worker) continue;
+        const brigadeId = worker.worker.brigade_id || null;
+        const target = brigadeId === null ? noBrigadeMap : (brigadeMap.get(brigadeId) || {
+          brigadeId,
+          brigadeName: brigade.brigadeName || 'Бригада без названия',
+          workers: new Map<number, any>(),
+        });
+        if (brigadeId !== null && !brigadeMap.has(brigadeId)) {
+          brigadeMap.set(brigadeId, target);
+        }
+        for (const log of worker.logs) {
+          if (!target.workers.has(worker.worker.id)) {
+            target.workers.set(worker.worker.id, {
+              worker: worker.worker,
+              logs: [],
+            });
+          }
+          target.workers.get(worker.worker.id).logs.push(log);
+        }
+      }
+    }
+
     const brigadeResult: any[] = [];
     for (const [, brigade] of brigadeMap) {
       brigadeResult.push(brigade);
@@ -209,10 +198,9 @@ export default function DashboardPage() {
     if (noBrigadeMap.workers.size > 0) {
       brigadeResult.push(noBrigadeMap);
     }
-
     setBrigadeGroupedData(brigadeResult);
   };
-  
+
   useEffect(() => {
     loadData();
   }, []);
@@ -351,7 +339,6 @@ export default function DashboardPage() {
     const brigadeLogs = logs.filter((log: any) => log.is_brigade);
     const soloLogs = logs.filter((log: any) => !log.is_brigade);
 
-    // Группировка бригадных записей
     const groupMap = new Map<string, any[]>();
     brigadeLogs.forEach((log: any) => {
       const key = `${log.object_id ?? 'null'}_${log.log_date}_${log.work_type_id}`;
@@ -372,7 +359,6 @@ export default function DashboardPage() {
       });
     });
 
-    // Одиночные записи
     const soloRows = soloLogs.map((log: any) => ({
       id: log.id,
       worker_name: log.worker.full_name,
@@ -392,29 +378,6 @@ export default function DashboardPage() {
     setEditBrigadeGroups([]);
     setEditSoloRows([]);
     document.body.style.overflow = 'auto';
-  };
-
-  const startEditSingleLog = (log: any) => {
-    setTargetType(log.worker_id ? 'worker' : 'brigade');
-    setSelectedWorkerId(log.worker_id || 0);
-    setSelectedBrigadeId(0);
-    setSelectedObjectId(log.object_id || 0);
-    setDate(log.log_date);
-
-    // Очищаем групповые данные и кладём запись в soloRows
-    setEditBrigadeGroups([]);
-    setEditSoloRows([
-      {
-        id: log.id,
-        worker_name: log.worker?.full_name || 'Неизвестно',
-        work_type_id: log.work_type_id,
-        quantity: String(log.quantity),
-        log_date: log.log_date,
-      },
-    ]);
-
-    setEditingObjectId(log.object_id ?? null); // открываем модальное окно
-    document.body.style.overflow = 'hidden';
   };
 
   const handleEditObjectSubmit = async (e: React.FormEvent) => {
@@ -472,6 +435,28 @@ export default function DashboardPage() {
     setEditSoloRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
   };
 
+  const startEditSingleLog = (log: any) => {
+    setTargetType(log.worker_id ? 'worker' : 'brigade');
+    setSelectedWorkerId(log.worker_id || 0);
+    setSelectedBrigadeId(0);
+    setSelectedObjectId(log.object_id || 0);
+    setDate(log.log_date);
+
+    setEditBrigadeGroups([]);
+    setEditSoloRows([
+      {
+        id: log.id,
+        worker_name: log.worker?.full_name || 'Неизвестно',
+        work_type_id: log.work_type_id,
+        quantity: String(log.quantity),
+        log_date: log.log_date,
+      },
+    ]);
+
+    setEditingObjectId(log.object_id ?? null);
+    document.body.style.overflow = 'hidden';
+  };
+
   return (
     <div className="space-y-8">
       {/* Форма добавления */}
@@ -489,7 +474,7 @@ export default function DashboardPage() {
               >
                 <option value={0} disabled>Выберите объект</option>
                 {objects.map(o => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
+                  <option key={o.id} value={o.id}>{o.name}{o.address ? ` — ${o.address}` : ''}</option>
                 ))}
               </select>
             </div>
@@ -579,7 +564,7 @@ export default function DashboardPage() {
                           {workTypes
                             .filter(wt => wt.category_id === cat.id)
                             .map(wt => (
-                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
                             ))}
                         </optgroup>
                       ))}
@@ -588,7 +573,7 @@ export default function DashboardPage() {
                           {workTypes
                             .filter(wt => wt.category_id == null)
                             .map(wt => (
-                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
                             ))}
                         </optgroup>
                       )}
@@ -647,7 +632,6 @@ export default function DashboardPage() {
               Редактирование объекта: {objects.find(o => o.id === editingObjectId)?.name || 'Без объекта'}
             </h2>
             <form onSubmit={handleEditObjectSubmit} className="space-y-6">
-              {/* Бригадные работы */}
               {editBrigadeGroups.length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 mb-2">Бригадные работы</h3>
@@ -663,9 +647,24 @@ export default function DashboardPage() {
                             required
                           >
                             <option value={0} disabled>Выберите...</option>
-                            {workTypes.map(wt => (
-                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                            {categories.map(cat => (
+                              <optgroup key={cat.id} label={cat.name}>
+                                {workTypes
+                                  .filter(wt => wt.category_id === cat.id)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                                  ))}
+                              </optgroup>
                             ))}
+                            {workTypes.some(wt => wt.category_id == null) && (
+                              <optgroup label="Без категории">
+                                {workTypes
+                                  .filter(wt => wt.category_id == null)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                                  ))}
+                              </optgroup>
+                            )}
                           </select>
                         </div>
                         <div className="flex-1 min-w-[120px]">
@@ -696,7 +695,6 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Работы сотрудников */}
               {editSoloRows.length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-700 mb-2">Работы сотрудников</h3>
@@ -716,9 +714,24 @@ export default function DashboardPage() {
                             required
                           >
                             <option value={0} disabled>Выберите...</option>
-                            {workTypes.map(wt => (
-                              <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit})</option>
+                            {categories.map(cat => (
+                              <optgroup key={cat.id} label={cat.name}>
+                                {workTypes
+                                  .filter(wt => wt.category_id === cat.id)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                                  ))}
+                              </optgroup>
                             ))}
+                            {workTypes.some(wt => wt.category_id == null) && (
+                              <optgroup label="Без категории">
+                                {workTypes
+                                  .filter(wt => wt.category_id == null)
+                                  .map(wt => (
+                                    <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                                  ))}
+                              </optgroup>
+                            )}
                           </select>
                         </div>
                         <div className="flex-1 min-w-[120px]">
@@ -786,7 +799,10 @@ export default function DashboardPage() {
           {groupedData.map(obj => (
             <details key={obj.id ?? 'no-obj'} className="bg-white rounded-xl shadow">
               <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
-                <span className="font-semibold">{obj.name}</span>
+                <span className="font-semibold">
+                  {obj.name}
+                  {obj.address && <span className="text-sm text-gray-500 ml-2">{obj.address}</span>}
+                </span>
                 {isManager && (
                   <button
                     onClick={(e) => {
@@ -935,19 +951,13 @@ export default function DashboardPage() {
         <div className="space-y-4">
           {brigadeGroupedData.length === 0 && <p className="text-gray-500">Нет добавленных работ.</p>}
           {brigadeGroupedData.map(brigade => (
-            <details
-              key={brigade.brigadeId ?? 'no-brigade'}
-              className="bg-white rounded-xl shadow"
-            >
+            <details key={brigade.brigadeId ?? 'no-brigade'} className="bg-white rounded-xl shadow">
               <summary className="p-4 cursor-pointer hover:bg-gray-50 flex justify-between items-center">
                 <span className="font-semibold">
                   {brigade.brigadeId === null ? 'Без бригады' : brigade.brigadeName}
                 </span>
                 <span className="text-sm text-gray-500">
-                  {Array.from(brigade.workers.values()).reduce(
-                    (sum: number, worker: any) => sum + worker.logs.length,
-                    0
-                  )} записей
+                  {Array.from(brigade.workers.values()).reduce((sum: number, worker: any) => sum + worker.logs.length, 0)} записей
                 </span>
               </summary>
               <div className="px-4 pb-4 space-y-4">
@@ -960,19 +970,13 @@ export default function DashboardPage() {
                         const unit = log.work_type?.unit || '';
                         const rate = log.work_type?.rate || 0;
                         const objectName = log.object?.name || 'Без объекта';
+                        const objectAddress = log.object?.address || '';
                         const isPending = log.status === 'pending';
                         return (
-                          <li
-                            key={`brigade-log-${log.id}`}
-                            className={`flex items-center justify-between ${
-                              isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''
-                            }`}
-                          >
+                          <li key={`brigade-log-${log.id}`} className={`flex items-center justify-between ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
                             <span>
                               {isPending && '⏳ '}
-                              {formatDate(log.log_date)} — {objectName} — {workTypeName}:{' '}
-                              {log.quantity} {unit} × {formatMoney(rate)} ={' '}
-                              <span className="font-medium">{formatMoney(log.amount)}</span>
+                              {formatDate(log.log_date)} — {objectName}{objectAddress ? ` (${objectAddress})` : ''} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(log.amount)}</span>
                             </span>
                             <span className="flex gap-1 ml-2">
                               {isManager && (
