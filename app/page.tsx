@@ -962,9 +962,14 @@ export default function DashboardPage() {
               </summary>
               <div className="px-4 pb-4 space-y-4">
                 {Array.from(brigade.workers.values()).map((workerEntry: any) => (
-                  <div key={workerEntry.worker.id} className="ml-2 text-sm text-gray-600">
-                    <p className="font-medium mb-1">{workerEntry.worker.full_name}</p>
-                    <ul className="space-y-1">
+                  <details key={workerEntry.worker.id} className="ml-2 text-sm text-gray-600">
+                    <summary className="cursor-pointer font-medium py-1">
+                      {workerEntry.worker.full_name}
+                      <span className="text-gray-400 ml-2 text-xs">
+                        ({workerEntry.logs.length} записей)
+                      </span>
+                    </summary>
+                    <ul className="space-y-1 mt-2 pl-4">
                       {workerEntry.logs.map((log: any) => {
                         const workTypeName = log.work_type?.name || '?';
                         const unit = log.work_type?.unit || '';
@@ -973,10 +978,17 @@ export default function DashboardPage() {
                         const objectAddress = log.object?.address || '';
                         const isPending = log.status === 'pending';
                         return (
-                          <li key={`brigade-log-${log.id}`} className={`flex items-center justify-between ${isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''}`}>
+                          <li
+                            key={`brigade-log-${log.id}`}
+                            className={`flex items-center justify-between ${
+                              isPending ? 'bg-yellow-50 border-l-4 border-yellow-400 pl-2' : ''
+                            }`}
+                          >
                             <span>
                               {isPending && '⏳ '}
-                              {formatDate(log.log_date)} — {objectName}{objectAddress ? ` (${objectAddress})` : ''} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} = <span className="font-medium">{formatMoney(log.amount)}</span>
+                              {formatDate(log.log_date)} — {objectName}
+                              {objectAddress ? ` (${objectAddress})` : ''} — {workTypeName}: {log.quantity} {unit} × {formatMoney(rate)} ={' '}
+                              <span className="font-medium">{formatMoney(log.amount)}</span>
                             </span>
                             <span className="flex gap-1 ml-2">
                               {isManager && (
@@ -1000,7 +1012,7 @@ export default function DashboardPage() {
                         );
                       })}
                     </ul>
-                  </div>
+                  </details>
                 ))}
               </div>
             </details>

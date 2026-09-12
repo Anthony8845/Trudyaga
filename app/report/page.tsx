@@ -17,6 +17,15 @@ import {
   AlignmentType,
 } from 'docx';
 
+const typeLabel = (type: string) => {
+  switch (type) {
+    case 'advance': return 'Аванс';
+    case 'salary': return 'Зарплата';
+    case 'bonus': return 'Премия';
+    default: return 'Другое';
+  }
+};
+
 export default function ReportPage() {
   const { user } = useAuth();
   const isManager = user?.role === 'brigadier' || user?.role === 'supervisor';
@@ -62,6 +71,7 @@ export default function ReportPage() {
       return;
     }
 
+    // Получаем сотрудника
     const { data: worker, error: workerError } = await supabase
       .from('workers')
       .select('full_name, position')
@@ -73,6 +83,7 @@ export default function ReportPage() {
       return;
     }
 
+    // Получаем подтверждённые работы за период
     const { data: logs, error: logsError } = await supabase
       .from('work_logs')
       .select(`
@@ -91,7 +102,16 @@ export default function ReportPage() {
       return;
     }
 
-    // Группируем работы по объектам с учётом адреса
+    // Получаем выплаты за период начисления
+    const period = startDate.substring(0, 7) + '-01';
+    const { data: payments } = await supabase
+      .from('salary_payments')
+      .select('id, amount, payment_date, type, comment')
+      .eq('worker_id', workerId)
+      .eq('period', period)
+      .order('payment_date', { ascending: true });
+
+    // Группируем работы по объектам (с учётом адреса)
     const objectGroups = new Map<number, { name: string; address?: string; logs: any[] }>();
     logs.forEach((log: any) => {
       const obj = log.object;
@@ -109,7 +129,7 @@ export default function ReportPage() {
     const tableRows: TableRow[] = [];
     let totalAmount = 0;
 
-    // Заголовки таблицы
+    // Заголовки таблицы работ
     tableRows.push(
       new TableRow({
         children: [
@@ -154,11 +174,12 @@ export default function ReportPage() {
       });
     }
 
+    // Итог по начислениям
     tableRows.push(
       new TableRow({
         children: [
           new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: 'Итого', bold: true })] })],
+            children: [new Paragraph({ children: [new TextRun({ text: 'Итого начислено', bold: true })] })],
             columnSpan: 5,
           }),
           new TableCell({
@@ -168,33 +189,106 @@ export default function ReportPage() {
       })
     );
 
-    const doc = new Document({
-      sections: [
-        {
+    const totalPaid = payments?.reduce((sum, p) => sum + p.amount, 0) || 0;
+    const balance = totalAmount - totalPaid;
+
+    if (totalPaid > 0) {
+      tableRows.push(
+        new TableRow({
           children: [
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: 'Расчётный листок', bold: true, size: 28 })],
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: 'Выплачено', bold: true })] })],
+              columnSpan: 5,
             }),
-            new Paragraph({
-              alignment: AlignmentType.CENTER,
-              children: [new TextRun({ text: `${formatDate(startDate)} – ${formatDate(endDate)}`, size: 22 })],
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: formatMoney(totalPaid), bold: true })], alignment: AlignmentType.RIGHT })],
             }),
-            new Paragraph({ children: [] }),
-            new Paragraph({ children: [new TextRun({ text: `Работодатель: ИП Пиногоров А.А.`, bold: true })] }),
-            new Paragraph({ children: [new TextRun({ text: `Сотрудник: ${worker.full_name}`, bold: true })] }),
-            new Paragraph({ children: [new TextRun({ text: `Должность: ${worker.position || ''}` })] }),
-            new Paragraph({ children: [] }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: tableRows,
-            }),
-            new Paragraph({ children: [] }),
-            new Paragraph({ children: [new TextRun({ text: `Дата формирования: ${new Date().toLocaleDateString('ru-RU')}` })] }),
-            new Paragraph({ children: [new TextRun({ text: 'ИП Пиногоров А.А.' })] }),
           ],
-        },
-      ],
+        })
+      );
+
+      tableRows.push(
+        new TableRow({
+          children: [
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: 'Остаток к выплате', bold: true })] })],
+              columnSpan: 5,
+            }),
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: formatMoney(balance), bold: true })], alignment: AlignmentType.RIGHT })],
+            }),
+          ],
+        })
+      );
+    }
+
+    // Формируем документ
+    const docChildren: any[] = [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: 'Расчётный листок', bold: true, size: 28 })],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: `${formatDate(startDate)} – ${formatDate(endDate)}`, size: 22 })],
+      }),
+      new Paragraph({ children: [] }),
+      new Paragraph({ children: [new TextRun({ text: `Работодатель: ИП Пиногоров А.А.`, bold: true })] }),
+      new Paragraph({ children: [new TextRun({ text: `Сотрудник: ${worker.full_name}`, bold: true })] }),
+      new Paragraph({ children: [new TextRun({ text: `Должность: ${worker.position || ''}` })] }),
+      new Paragraph({ children: [] }),
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: tableRows,
+      }),
+    ];
+
+    // Добавляем детализацию выплат (если есть)
+    if (payments && payments.length > 0) {
+      docChildren.push(new Paragraph({ children: [] }));
+      docChildren.push(
+        new Paragraph({
+          children: [new TextRun({ text: 'Детализация выплат', bold: true, size: 22 })],
+        })
+      );
+
+      const paymentRows: TableRow[] = [
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Дата', bold: true })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Тип', bold: true })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Комментарий', bold: true })] })] }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Сумма', bold: true })], alignment: AlignmentType.RIGHT })] }),
+          ],
+        }),
+        ...payments.map(p =>
+          new TableRow({
+            children: [
+              new TableCell({ children: [new Paragraph(formatDate(p.payment_date))] }),
+              new TableCell({ children: [new Paragraph(typeLabel(p.type))] }),
+              new TableCell({ children: [new Paragraph(p.comment || '—')] }),
+              new TableCell({ children: [new Paragraph({ children: [new TextRun(formatMoney(p.amount))], alignment: AlignmentType.RIGHT })] }),
+            ],
+          })
+        ),
+      ];
+
+      docChildren.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: paymentRows,
+        })
+      );
+    }
+
+    docChildren.push(new Paragraph({ children: [] }));
+    docChildren.push(
+      new Paragraph({ children: [new TextRun({ text: `Дата формирования: ${new Date().toLocaleDateString('ru-RU')}` })] })
+    );
+    docChildren.push(new Paragraph({ children: [new TextRun({ text: 'ИП Пиногоров А.А.' })] }));
+
+    const doc = new Document({
+      sections: [{ children: docChildren }],
     });
 
     const blob = await Packer.toBlob(doc);
