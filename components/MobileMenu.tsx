@@ -42,9 +42,20 @@ export function MobileMenu() {
             <Link href="/" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Дашборд</Link>
             <Link href="/report" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Зарплата</Link>
             <Link href="/payments" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Выплаты</Link>
-            <hr />
-            <AdminLinks />
-            <SupervisorLinks />
+
+            {user?.role === 'brigadier' || user?.role === 'supervisor' ? (
+              <>
+                <Link href="/workers" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Сотрудники</Link>
+                <Link href="/brigades" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Бригады</Link>
+                <Link href="/work-types" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Расценки</Link>
+                <Link href="/objects" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Объекты</Link>
+              </>
+            ) : null}
+
+            {user?.role === 'supervisor' && (
+              <Link href="/supervisor" className="text-gray-700 hover:text-blue-600" onClick={() => setOpen(false)}>Подтверждение</Link>
+            )}
+
             <div className="pt-4 border-t flex items-center justify-between">
               <NotificationBell />
               <UserMenu />

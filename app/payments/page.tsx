@@ -31,10 +31,15 @@ function PaymentsContent() {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [payments, setPayments] = useState<SalaryPayment[]>([]);
   const [viewMode, setViewMode] = useState<'byPaymentDate' | 'byPeriod'>('byPeriod');
-  const [selectedPeriod, setSelectedPeriod] = useState(() => {
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('');
+
+  useEffect(() => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-  });
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 2)
+      .toISOString()
+      .split('T')[0];
+    setSelectedPeriod(firstDay);
+  }, []);
 
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [workerPayments, setWorkerPayments] = useState<SalaryPayment[]>([]);
@@ -77,14 +82,14 @@ function PaymentsContent() {
   };
 
   useEffect(() => {
-    loadData();
+    if (selectedPeriod) loadData();
   }, [selectedPeriod, viewMode]);
 
-  const openWorkerPayments = async (worker: Worker) => {
-    setSelectedWorker(worker);
-    const filtered = payments.filter(p => p.worker_id === worker.id);
-    setWorkerPayments(filtered);
-  };
+    const openWorkerPayments = async (worker: Worker) => {
+      setSelectedWorker(worker);
+      const filtered = payments.filter(p => p.worker_id === worker.id);
+      setWorkerPayments(filtered);
+    };
 
   const handleAddPayment = () => {
     if (!selectedWorker) return;
@@ -168,7 +173,7 @@ function PaymentsContent() {
           <input
             type="month"
             value={selectedPeriod.substring(0, 7)}
-            onChange={e => setSelectedPeriod(e.target.value + '-01')}
+            onChange={e => setSelectedPeriod(e.target.value + '-02')}
             className="rounded-md border-gray-300 text-sm"
           />
           <button
