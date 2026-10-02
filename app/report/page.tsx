@@ -378,9 +378,18 @@ export default function ReportPage() {
 
                         <ul className="mt-2 space-y-1 pl-4 text-sm">
                           {w.details.map((d: any) => (
-                            <li key={d.id} className="text-gray-600">
-                              {formatDate(d.date)} — {d.workTypeName}: {d.quantity} {d.unit} × {formatMoney(d.rate)} = {formatMoney(d.amount)}
-                              {d.object && <span className="text-gray-400"> ({d.object.name}{d.object.address ? `, ${d.object.address}` : ''})</span>}
+                            <li key={d.id} className="text-gray-600 text-sm leading-relaxed">
+                              <span className="text-gray-500">{formatDate(d.date)}</span>
+                              {' — '}
+                              <span>{d.workTypeName}</span>
+                              {': '}
+                              {d.quantity} {d.unit} × {formatMoney(d.rate)} = <span className="font-medium">{formatMoney(d.amount)}</span>
+                              {d.object && (
+                                <span className="block text-xs text-gray-400 mt-0.5">
+                                  {d.object.name}
+                                  {d.object.address ? `, ${d.object.address}` : ''}
+                                </span>
+                              )}
                             </li>
                           ))}
                         </ul>

@@ -425,7 +425,7 @@ export async function getSalaryReport(startDate: string, endDate: string) {
       quantity: log.quantity,
       rate: log.work_type?.rate,
       amount: log.amount,
-      object: log.object ? { id: log.object.id, name: log.object.name } : null,
+      object: log.object ? { id: log.object.id, name: log.object.name, address: log.object.address } : null,
     });
   }
 
