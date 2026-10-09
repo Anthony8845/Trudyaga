@@ -42,6 +42,7 @@ export default function DashboardPage() {
 
   const [viewMode, setViewMode] = useState<'byObject' | 'byBrigade'>('byObject');
 
+  // Форма добавления
   const [targetType, setTargetType] = useState<'worker' | 'brigade'>('worker');
   const [selectedWorkerId, setSelectedWorkerId] = useState<number>(0);
   const [selectedBrigadeId, setSelectedBrigadeId] = useState<number>(0);
@@ -51,14 +52,18 @@ export default function DashboardPage() {
     { id: Date.now(), work_type_id: 0, quantity: '' },
   ]);
 
+  // Редактирование объекта
   const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
   const [editBrigadeGroups, setEditBrigadeGroups] = useState<any[]>([]);
   const [editSoloRows, setEditSoloRows] = useState<any[]>([]);
+  const [newRows, setNewRows] = useState<any[]>([]);
 
+  // Комментарии
   const [objectCommentsMap, setObjectCommentsMap] = useState<Record<number, any[]>>({});
   const [newCommentMap, setNewCommentMap] = useState<Record<number, string>>({});
   const [expandedObjectId, setExpandedObjectId] = useState<number | null>(null);
 
+  // ---------- Загрузка данных ----------
   const loadData = async () => {
     const [w, wt, b, obj, cats] = await Promise.all([
       getWorkers(),
@@ -205,6 +210,7 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
+  // ---------- Комментарии ----------
   const loadComments = async (objectId: number) => {
     if (!objectId) return;
     const { data, error } = await supabase
@@ -260,6 +266,7 @@ export default function DashboardPage() {
     loadComments(objectId);
   };
 
+  // ---------- Форма добавления ----------
   const resetBatchForm = () => {
     setTargetType('worker');
     setSelectedWorkerId(0);
@@ -314,6 +321,7 @@ export default function DashboardPage() {
     }
   };
 
+  // ---------- Редактирование объекта ----------
   const startEditObject = async (objectId: number | null) => {
     let query = supabase
       .from('work_logs')
@@ -369,6 +377,7 @@ export default function DashboardPage() {
 
     setEditBrigadeGroups(brigadeGroups);
     setEditSoloRows(soloRows);
+    setNewRows([]);
     setEditingObjectId(objectId);
     document.body.style.overflow = 'hidden';
   };
@@ -377,16 +386,50 @@ export default function DashboardPage() {
     setEditingObjectId(null);
     setEditBrigadeGroups([]);
     setEditSoloRows([]);
+    setNewRows([]);
     document.body.style.overflow = 'auto';
+  };
+
+  const updateBrigadeGroupField = (index: number, field: string, value: any) => {
+    setEditBrigadeGroups(prev => prev.map((g, i) => i === index ? { ...g, [field]: value } : g));
+  };
+
+  const updateSoloRowField = (index: number, field: string, value: any) => {
+    setEditSoloRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
+  };
+
+  // Новые строки
+  const addNewEditRow = () => {
+    setNewRows(prev => [
+      ...prev,
+      {
+        id: Date.now(),
+        targetType: 'worker',
+        worker_id: 0,
+        brigade_id: 0,
+        work_type_id: 0,
+        quantity: '',
+        log_date: new Date().toISOString().split('T')[0],
+      },
+    ]);
+  };
+
+  const updateNewEditRow = (index: number, field: string, value: any) => {
+    setNewRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
+  };
+
+  const removeNewEditRow = (index: number) => {
+    setNewRows(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleEditObjectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editBrigadeGroups.length && !editSoloRows.length) return;
+    if (!editBrigadeGroups.length && !editSoloRows.length && !newRows.length) return;
 
     try {
       const updates: Promise<any>[] = [];
 
+      // Обновление бригадных групп
       editBrigadeGroups.forEach(group => {
         const wt = workTypes.find(w => w.id === group.work_type_id);
         const rate = wt ? wt.rate : 0;
@@ -405,6 +448,7 @@ export default function DashboardPage() {
         });
       });
 
+      // Обновление одиночных работ
       editSoloRows.forEach(row => {
         const wt = workTypes.find(w => w.id === row.work_type_id);
         const rate = wt ? wt.rate : 0;
@@ -419,7 +463,41 @@ export default function DashboardPage() {
         );
       });
 
+      // Добавление новых работ
+      for (const row of newRows) {
+        const wt = workTypes.find(w => w.id === row.work_type_id);
+        const rate = wt ? wt.rate : 0;
+        const qty = parseFloat(row.quantity);
+        if (!qty || !row.work_type_id) continue;
+
+        if (row.targetType === 'worker') {
+          if (!row.worker_id) continue;
+          updates.push(
+            addWorkLog({
+              worker_id: row.worker_id,
+              work_type_id: row.work_type_id,
+              quantity: qty,
+              log_date: row.log_date,
+              object_id: editingObjectId ?? undefined,
+            } as any)
+          );
+        } else {
+          if (!row.brigade_id) continue;
+          updates.push(
+            addWorkLogForBrigade(
+              row.brigade_id,
+              row.work_type_id,
+              qty,
+              row.log_date,
+              editingObjectId ?? undefined
+            )
+          );
+        }
+      }
+
       await Promise.all(updates);
+
+      setNewRows([]);
       cancelEditObject();
       loadData();
     } catch (err: any) {
@@ -427,14 +505,7 @@ export default function DashboardPage() {
     }
   };
 
-  const updateBrigadeGroupField = (index: number, field: string, value: any) => {
-    setEditBrigadeGroups(prev => prev.map((g, i) => i === index ? { ...g, [field]: value } : g));
-  };
-
-  const updateSoloRowField = (index: number, field: string, value: any) => {
-    setEditSoloRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
-  };
-
+  // ---------- Редактирование отдельной записи из режима "По бригадам" ----------
   const startEditSingleLog = (log: any) => {
     setTargetType(log.worker_id ? 'worker' : 'brigade');
     setSelectedWorkerId(log.worker_id || 0);
@@ -703,7 +774,22 @@ export default function DashboardPage() {
                       <div key={row.id} className="flex flex-wrap items-end gap-2 border p-2 rounded bg-gray-50">
                         <div className="min-w-[150px]">
                           <label className="block text-xs font-medium text-gray-500">Сотрудник</label>
-                          <div className="text-sm font-medium">{row.worker_name}</div>
+                          <div className="text-sm font-medium">
+                            {row.id > 1e12 ? ( // временный id означает новую строку
+                              <select
+                                value={row.worker_id || ''}
+                                onChange={e => updateSoloRowField(idx, 'worker_id', Number(e.target.value))}
+                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                              >
+                                <option value="">Выберите сотрудника</option>
+                                {workers.map(w => (
+                                  <option key={w.id} value={w.id}>{w.full_name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <div className="text-sm font-medium">{row.worker_name}</div>
+                            )}
+                          </div>
                         </div>
                         <div className="flex-1 min-w-[200px]">
                           <label className="block text-xs font-medium text-gray-500">Вид работы</label>
@@ -761,7 +847,112 @@ export default function DashboardPage() {
                   </div>
                 </div>
               )}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">Новые работы</h3>
+                <div className="space-y-3">
+                  {newRows.map((row, idx) => (
+                    <div key={row.id} className="border p-2 rounded bg-gray-50 space-y-2">
+                      <div className="flex gap-2 items-center">
+                        <label className="inline-flex items-center text-sm">
+                          <input
+                            type="radio"
+                            checked={row.targetType === 'worker'}
+                            onChange={() => updateNewEditRow(idx, 'targetType', 'worker')}
+                          />
+                          <span className="ml-1">Сотруднику</span>
+                        </label>
+                        <label className="inline-flex items-center text-sm">
+                          <input
+                            type="radio"
+                            checked={row.targetType === 'brigade'}
+                            onChange={() => updateNewEditRow(idx, 'targetType', 'brigade')}
+                          />
+                          <span className="ml-1">Бригаде</span>
+                        </label>
+                      </div>
 
+                      {row.targetType === 'worker' ? (
+                        <select
+                          value={row.worker_id}
+                          onChange={e => updateNewEditRow(idx, 'worker_id', Number(e.target.value))}
+                          className="block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                        >
+                          <option value={0} disabled>Выберите сотрудника</option>
+                          {workers.map(w => (
+                            <option key={w.id} value={w.id}>{w.full_name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          value={row.brigade_id}
+                          onChange={e => updateNewEditRow(idx, 'brigade_id', Number(e.target.value))}
+                          className="block w-full rounded-md border-gray-300 shadow-sm text-sm"
+                        >
+                          <option value={0} disabled>Выберите бригаду</option>
+                          {brigades.map(b => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <select
+                          value={row.work_type_id}
+                          onChange={e => updateNewEditRow(idx, 'work_type_id', Number(e.target.value))}
+                          className="rounded-md border-gray-300 shadow-sm text-sm"
+                        >
+                          <option value={0} disabled>Вид работы</option>
+                          {categories.map(cat => (
+                            <optgroup key={cat.id} label={cat.name}>
+                              {workTypes.filter(wt => wt.category_id === cat.id).map(wt => (
+                                <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                          {workTypes.some(wt => wt.category_id == null) && (
+                            <optgroup label="Без категории">
+                              {workTypes.filter(wt => wt.category_id == null).map(wt => (
+                                <option key={wt.id} value={wt.id}>{wt.name} ({wt.unit}) — {wt.rate} ₽</option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="Количество"
+                          value={row.quantity}
+                          onChange={e => updateNewEditRow(idx, 'quantity', e.target.value)}
+                          className="rounded-md border-gray-300 shadow-sm text-sm"
+                        />
+                        <input
+                          type="date"
+                          value={row.log_date}
+                          onChange={e => updateNewEditRow(idx, 'log_date', e.target.value)}
+                          className="rounded-md border-gray-300 shadow-sm text-sm"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeNewEditRow(idx)}
+                        className="text-red-500 hover:text-red-700 text-xs"
+                      >
+                        Удалить строку
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addNewEditRow}
+                  className="mt-2 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 border border-blue-200"
+                >
+                  + Добавить работу
+                </button>
+              </div>
+             
               <div className="flex justify-end space-x-2">
                 <button type="button" onClick={cancelEditObject} className="px-4 py-2 bg-gray-200 rounded-md">
                   Отмена
